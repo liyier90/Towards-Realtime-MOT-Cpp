@@ -101,7 +101,8 @@ void JDETracker::update(string &video_path)
 		if (pred_thresh.sizes()[0] > 0)
 		{
 			auto dets = non_max_suppression(pred_thresh);
-			scale_coords(dets.slice(1, 0, 4), Size(this->net_width, this->net_height), Size(img0.cols, img0.rows));
+      auto coords = dets.slice(1, 0, 4);
+			scale_coords(coords, Size(this->net_width, this->net_height), Size(img0.cols, img0.rows));
 			// Detections is list of (x1, y1, x2, y2, object_conf, class_score, class_pred)
 			for (int i = 0; i < dets.sizes()[0]; i++)
 			{
