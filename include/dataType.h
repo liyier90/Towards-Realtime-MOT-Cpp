@@ -38,5 +38,5 @@ typedef struct t {
 	std::vector<int> unmatched_detections;
 }TRACHER_MATCHD;
 
-//linear_assignment:
+//LinearAssignment:
 typedef Eigen::Matrix<float, -1, -1, Eigen::RowMajor> DYNAMICM;

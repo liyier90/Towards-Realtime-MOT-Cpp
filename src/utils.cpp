@@ -5,620 +5,617 @@ date: 08/19/2021
 */
 
 #include "JDETracker.h"
+
+#include <algorithm>
+#include <cmath>
+#include <cstdlib>
+#include <iostream>
+#include <map>
+#include <utility>
+#include <vector>
+
+#include <opencv2/opencv.hpp>
+
 #include "lapjv.h"
 
-Size JDETracker::get_size(int vw, int vh, int dw, int dh)
+cv::Size JDETracker::GetSize(
+    int vw
+  , int vh
+  , int dw
+  , int dh)
 {
-	Size size;
-	float wa = float(dw) / vw;
-	float ha = float(dh) / vh;
-	float a = min(wa, ha);
-	size.width = int(vw*a);
-	size.height = int(vh*a);
+  cv::Size size;
+  float wa = static_cast<float>(dw) / vw;
+  float ha = static_cast<float>(dh) / vh;
+  float a = min(wa, ha);
+  size.width = static_cast<int>(vw * a);
+  size.height = static_cast<int>(vh * a);
 
-	return size;
+  return size;
 }
 
-Mat JDETracker::letterbox(Mat img, int height, int width)
+cv::Mat JDETracker::Letterbox(
+    cv::Mat img
+  , int height
+  , int width)
 {
-	Size shape = Size(img.cols, img.rows);
-	float ratio = min(float(height) / shape.height, float(width) / shape.width);
-	Size new_shape = Size(round(shape.width*ratio), round(shape.height*ratio));
-	float dw = float(width - new_shape.width) / 2;
-	float dh = float(height - new_shape.height) / 2;
-	int top = round(dh - 0.1);
-	int bottom = round(dh + 0.1);
-	int left = round(dw - 0.1);
-	int right = round(dw + 0.1);
+  cv::Size shape = cv::Size(img.cols, img.rows);
+  auto ratio = min(static_cast<float>(height) / shape.height,
+      static_cast<float>(width) / shape.width);
+  auto new_shape = cv::Size(round(shape.width * ratio),
+      round(shape.height * ratio));
+  auto dw = static_cast<float>(width - new_shape.width) / 2;
+  auto dh = static_cast<float>(height - new_shape.height) / 2;
+  int top = round(dh - 0.1);
+  int bottom = round(dh + 0.1);
+  int left = round(dw - 0.1);
+  int right = round(dw + 0.1);
 
-	resize(img, img, new_shape, INTER_AREA);
-	copyMakeBorder(img, img, top, bottom, left, right, BORDER_CONSTANT, Scalar(127.5, 127.5, 127.5));
-	return img;
+  cv::resize(img, img, new_shape, cv::INTER_AREA);
+  cv::copyMakeBorder(img, img, top, bottom, left, right, cv::BORDER_CONSTANT,
+      cv::Scalar(127.5, 127.5, 127.5));
+  return img;
 }
 
-torch::Tensor JDETracker::nms(const torch::Tensor& boxes, const torch::Tensor& scores, float overlap)
+torch::Tensor JDETracker::Nms(
+    const torch::Tensor &rBoxes
+  , const torch::Tensor &rScores
+  , float nmsThreshold)
 {
-	int count = 0;
-	int top_k = 200;
-	torch::Tensor keep = torch::empty({ scores.size(0) }).to(torch::kLong).to(scores.device()).fill_(-1);
+  auto num_to_keep = 0;
+  auto top_k = 200;
 
-	torch::Tensor x1 = boxes.select(1, 0).clone();
-	torch::Tensor y1 = boxes.select(1, 1).clone();
-	torch::Tensor x2 = boxes.select(1, 2).clone();
-	torch::Tensor y2 = boxes.select(1, 3).clone();
-	torch::Tensor area = (x2 - x1)*(y2 - y1);
+  auto x1 = rBoxes.select(1, 0).contiguous();
+  auto y1 = rBoxes.select(1, 1).contiguous();
+  auto x2 = rBoxes.select(1, 2).contiguous();
+  auto y2 = rBoxes.select(1, 3).contiguous();
 
-	std::tuple<torch::Tensor, torch::Tensor> sort_ret = torch::sort(scores.unsqueeze(1), 0, 0);
-	torch::Tensor v = std::get<0>(sort_ret).squeeze(1).to(scores.device());
-	torch::Tensor idx = std::get<1>(sort_ret).squeeze(1).to(scores.device());
+  torch::Tensor areas = (x2 - x1) * (y2 - y1);
+  
+  auto order = std::get<1>(
+      rScores.sort(/*stable=*/true, /*dim=*/0, /*descending=*/true));
 
-	int num_ = idx.size(0);
-	if (num_ > top_k) //python:idx = idx[-top_k:]
-	{
-		idx = idx.slice(0, num_ - top_k, num_).clone();
-	}
-	torch::Tensor xx1, yy1, xx2, yy2, w, h;
-	while (idx.numel() > 0)
-	{
-		auto i = idx[-1];
-		keep[count] = i;
-		count += 1;
-		if (1 == idx.size(0))
-		{
-			break;
-		}
-		idx = idx.slice(0, 0, idx.size(0) - 1).clone();
+  auto num_dets = rScores.size(0);
+  torch::Tensor keep = torch::empty({num_dets}).to(torch::kLong);
+  torch::Tensor suppressed = torch::empty({num_dets}).to(torch::kByte);
 
-		xx1 = x1.index_select(0, idx);
-		yy1 = y1.index_select(0, idx);
-		xx2 = x2.index_select(0, idx);
-		yy2 = y2.index_select(0, idx);
+  auto *p_keep = keep.data_ptr<long>();
+  auto *p_suppressed = suppressed.data_ptr<uint8_t>();
+  auto *p_order = order.data_ptr<long>();
+  auto *p_x1 = x1.data_ptr<float>();
+  auto *p_y1 = y1.data_ptr<float>();
+  auto *p_x2 = x2.data_ptr<float>();
+  auto *p_y2 = y2.data_ptr<float>();
+  auto *p_areas = areas.data_ptr<float>();
 
-		xx1 = xx1.clamp(x1[i].item().toFloat(), INT_MAX*1.0);
-		yy1 = yy1.clamp(y1[i].item().toFloat(), INT_MAX*1.0);
-		xx2 = xx2.clamp(INT_MIN*1.0, x2[i].item().toFloat());
-		yy2 = yy2.clamp(INT_MIN*1.0, y2[i].item().toFloat());
+  for (int _i = 0; _i < num_dets; ++_i) {
+    if (num_to_keep >= top_k) {
+      break;
+    }
+    auto i = p_order[_i];
+    if (p_suppressed[i] == 1) {
+      continue;
+    }
+    p_keep[num_to_keep++] = i;
+    auto i_x1 = p_x1[i];
+    auto i_y1 = p_y1[i];
+    auto i_x2 = p_x2[i];
+    auto i_y2 = p_y2[i];
+    auto i_area = p_areas[i];
 
-		w = xx2 - xx1;
-		h = yy2 - yy1;
-
-		w = w.clamp(0, INT_MAX);
-		h = h.clamp(0, INT_MAX);
-
-		torch::Tensor inter = w * h;
-		torch::Tensor rem_areas = area.index_select(0, idx);
-
-		torch::Tensor union_ = (rem_areas - inter) + area[i];
-		torch::Tensor Iou = inter * 1.0 / union_;
-		torch::Tensor index_small = Iou < overlap;
-		auto mask_idx = torch::nonzero(index_small).squeeze();
-		idx = idx.index_select(0, mask_idx);//pthon: idx = idx[IoU.le(overlap)]
-	}
-	return keep.index_select(0, torch::nonzero(keep >= 0).squeeze());
+    for (int _j = _i + 1; _j < num_dets; ++_j) {
+      auto j = p_order[_j];
+      if (p_suppressed[j] == 1) {
+        continue;
+      }
+      auto xx1 = std::max(i_x1, p_x1[j]);
+      auto yy1 = std::max(i_y1, p_y1[j]);
+      auto xx2 = std::min(i_x2, p_x2[j]);
+      auto yy2 = std::min(i_y2, p_y2[j]);
+      auto w = std::max(static_cast<float>(0), xx2 - xx1);
+      auto h = std::max(static_cast<float>(0), yy2 - yy1);
+      auto inter = w * h;
+      auto iou = inter / (i_area + p_areas[j] - inter);
+      if (iou > nmsThreshold) {
+        p_suppressed[j] = 1;
+      }
+    }
+  }
+  return keep.narrow(/*dim=*/0, /*start=*/0, /*length=*/num_to_keep);
 }
 
 torch::Tensor JDETracker::xywh2xyxy(torch::Tensor x)
 {
-	auto y = torch::zeros_like(x);
-	y.slice(1, 0, 1) = x.slice(1, 0, 1) - x.slice(1, 2, 3) / 2;
-	y.slice(1, 1, 2) = x.slice(1, 1, 2) - x.slice(1, 3, 4) / 2;
-	y.slice(1, 2, 3) = x.slice(1, 0, 1) + x.slice(1, 2, 3) / 2;
-	y.slice(1, 3, 4) = x.slice(1, 1, 2) + x.slice(1, 3, 4) / 2;
+  auto y = torch::zeros_like(x);
+  y.slice(1, 0, 1) = x.slice(1, 0, 1) - x.slice(1, 2, 3) / 2;
+  y.slice(1, 1, 2) = x.slice(1, 1, 2) - x.slice(1, 3, 4) / 2;
+  y.slice(1, 2, 3) = x.slice(1, 0, 1) + x.slice(1, 2, 3) / 2;
+  y.slice(1, 3, 4) = x.slice(1, 1, 2) + x.slice(1, 3, 4) / 2;
 
-	return y;
+  return y;
 }
 
-torch::Tensor JDETracker::non_max_suppression(torch::Tensor prediction)
+torch::Tensor JDETracker::NonMaxSuppression(torch::Tensor prediction)
 {
-	prediction.slice(1, 0, 4) = xywh2xyxy(prediction.slice(1, 0, 4));
-	torch::Tensor nms_indices = nms(prediction.slice(1, 0, 4), prediction.select(1, 4), nms_thresh);
+  prediction.slice(1, 0, 4) = xywh2xyxy(prediction.slice(1, 0, 4));
+  torch::Tensor nms_indices = this->Nms(prediction.slice(1, 0, 4),
+      prediction.select(1, 4), mNmsThreshold);
 
-	return prediction.index_select(0, nms_indices);
+  return prediction.index_select(0, nms_indices);
 }
 
-void JDETracker::scale_coords(torch::Tensor &coords, Size img_size, Size img0_shape)
+void JDETracker::ScaleCoords(
+    torch::Tensor &coords
+  , Size img_size
+  , Size img0_shape)
 {
-	float gain_w = float(img_size.width) / img0_shape.width;
-	float gain_h = float(img_size.height) / img0_shape.height;
-	float gain = min(gain_w, gain_h);
-	float pad_x = (img_size.width - img0_shape.width*gain) / 2;
-	float pad_y = (img_size.height - img0_shape.height*gain) / 2;
-	coords.select(1, 0) -= pad_x;
-	coords.select(1, 1) -= pad_y;
-	coords.select(1, 2) -= pad_x;
-	coords.select(1, 3) -= pad_y;
-	coords /= gain;
-	coords = torch::clamp(coords, 0);
+  float gain_w = static_cast<float>(img_size.width) / img0_shape.width;
+  float gain_h = static_cast<float>(img_size.height) / img0_shape.height;
+  float gain = min(gain_w, gain_h);
+  float pad_x = (img_size.width - img0_shape.width*gain) / 2;
+  float pad_y = (img_size.height - img0_shape.height*gain) / 2;
+  coords.select(1, 0) -= pad_x;
+  coords.select(1, 1) -= pad_y;
+  coords.select(1, 2) -= pad_x;
+  coords.select(1, 3) -= pad_y;
+  coords /= gain;
+  coords = torch::clamp(coords, 0);
 }
 
-vector<STrack*> JDETracker::joint_stracks(vector<STrack*> &tlista, vector<STrack> &tlistb)
+std::vector<STrack*> JDETracker::CombineStracks(
+    std::vector<STrack*> &rStracks1
+  , std::vector<STrack> &rStracks2)
 {
-	map<int, int> exists;
-	vector<STrack*> res;
-	for (int i = 0; i < tlista.size(); i++)
-	{
-		exists.insert(pair<int, int>(tlista[i]->track_id, 1));
-		res.push_back(tlista[i]);
-	}
-	for (int i = 0; i < tlistb.size(); i++)
-	{
-		int tid = tlistb[i].track_id;
-		if (!exists[tid] || exists.count(tid) == 0)
-		{
-			exists[tid] = 1;
-			res.push_back(&tlistb[i]);
-		}
-	}
-	return res;
+  std::map<int, int> exists;
+  std::vector<STrack*> res;
+  for (int i = 0; i < rStracks1.size(); ++i) {
+    exists.insert(std::pair<int, int>(rStracks1[i]->mTrackId, 1));
+    res.push_back(rStracks1[i]);
+  }
+  for (int i = 0; i < rStracks2.size(); ++i) {
+    auto tid = rStracks2[i].mTrackId;
+    if (!exists[tid] || exists.count(tid) == 0) {
+      exists[tid] = 1;
+      res.push_back(&rStracks2[i]);
+    }
+  }
+  return res;
 }
 
-vector<STrack> JDETracker::joint_stracks(vector<STrack> &tlista, vector<STrack> &tlistb)
+std::vector<STrack> JDETracker::CombineStracks(
+    std::vector<STrack>& rStracks1 
+  , std::vector<STrack>& rStracks2)
 {
-	map<int, int> exists;
-	vector<STrack> res;
-	for (int i = 0; i < tlista.size(); i++)
-	{
-		exists.insert(pair<int, int>(tlista[i].track_id, 1));
-		res.push_back(tlista[i]);
-	}
-	for (int i = 0; i < tlistb.size(); i++)
-	{
-		int tid = tlistb[i].track_id;
-		if (!exists[tid] || exists.count(tid) == 0)
-		{
-			exists[tid] = 1;
-			res.push_back(tlistb[i]);
-		}
-	}
-	return res;
+  std::map<int, int> exists;
+  std::vector<STrack> res;
+  for (int i = 0; i < rStracks1.size(); ++i) {
+    exists.insert(std::pair<int, int>(rStracks1[i].mTrackId, 1));
+    res.push_back(rStracks1[i]);
+  }
+  for (int i = 0; i < rStracks2.size(); ++i) {
+    auto tid = rStracks2[i].mTrackId;
+    if (!exists[tid] || exists.count(tid) == 0) {
+      exists[tid] = 1;
+      res.push_back(rStracks2[i]);
+    }
+  }
+  return res;
 }
 
-vector<STrack> JDETracker::sub_stracks(vector<STrack> &tlista, vector<STrack> &tlistb)
+std::vector<STrack> JDETracker::SubstractStracks(
+    std::vector<STrack> &rStracks1
+  , std::vector<STrack> &rStracks2)
 {
-	map<int, STrack> stracks;
-	for (int i = 0; i < tlista.size(); i++)
-	{
-		stracks.insert(pair<int, STrack>(tlista[i].track_id, tlista[i]));
-	}
-	for (int i = 0; i < tlistb.size(); i++)
-	{
-		int tid = tlistb[i].track_id;
-		if (stracks.count(tid) != 0)
-		{
-			stracks.erase(tid);
-		}
-	}
+  std::map<int, STrack> stracks;
+  for (int i = 0; i < rStracks1.size(); ++i) {
+    stracks.insert(
+        std::pair<int, STrack>(rStracks1[i].mTrackId, rStracks1[i]));
+  }
+  for (int i = 0; i < rStracks2.size(); ++i) {
+    auto tid = rStracks2[i].mTrackId;
+    if (stracks.count(tid) != 0) {
+      stracks.erase(tid);
+    }
+  }
+  std::vector<STrack> res;
+  for (auto it = stracks.begin(); it != stracks.end(); ++it) {
+    res.push_back(it->second);
+  }
 
-	vector<STrack> res;
-	std::map<int, STrack>::iterator  it;
-	for (it = stracks.begin(); it != stracks.end(); ++it)
-	{
-		res.push_back(it->second);
-	}
-
-	return res;
+  return res;
 }
 
-void JDETracker::remove_duplicate_stracks(vector<STrack> &resa, vector<STrack> &resb, vector<STrack> &stracksa, vector<STrack> &stracksb)
+void JDETracker::RemoveDuplicateStracks(
+    const std::vector<STrack> &rStracks1
+  , const std::vector<STrack> &rStracks2
+  , std::vector<STrack> &rRes1
+  , std::vector<STrack> &rRes2)
 {
-	vector<vector<float> > pdist = iou_distance(stracksa, stracksb);
-	vector<pair<int, int> > pairs;
-	for (int i = 0; i < pdist.size(); i++)
-	{
-		for (int j = 0; j < pdist[i].size(); j++)
-		{
-			if (pdist[i][j] < 0.15)
-			{
-				pairs.push_back(pair<int, int>(i, j));
-			}
-		}
-	}
+  auto distances = this->IouDistance(rStracks1, rStracks2);
+  std::vector<std::pair<int, int>> pairs;
+  for (int i = 0; i < distances.size(); ++i) {
+    for (int j = 0; j < distances[i].size(); ++j) {
+      if (distances[i][j] < 0.15) {
+        pairs.push_back(std::pair<int, int>(i, j));
+      }
+    }
+  }
 
-	vector<int> dupa, dupb;
-	for (int i = 0; i < pairs.size(); i++)
-	{
-		int timep = stracksa[pairs[i].first].frame_id - stracksa[pairs[i].first].start_frame;
-		int timeq = stracksb[pairs[i].second].frame_id - stracksb[pairs[i].second].start_frame;
-		if (timep > timeq)
-			dupb.push_back(pairs[i].second);
-		else
-			dupa.push_back(pairs[i].first);
-	}
+  std::vector<int> duplicates_1;
+  std::vector<int> duplicates_2;
+  for (int i = 0; i < pairs.size(); ++i) {
+    auto idx_1 = pairs[i].first;
+    auto idx_2 = pairs[i].second;
+    auto age_1 = rStracks1[idx_1].mFrameId - rStracks1[idx_1].mStartFrame;
+    auto age_2 = rStracks2[idx_2].mFrameId - rStracks2[idx_2].mStartFrame;
+    if (age_1 > age_2) {
+      duplicates_2.push_back(idx_2);
+    } else {
+      duplicates_1.push_back(idx_1);
+    }
+  }
 
-	for (int i = 0; i < stracksa.size(); i++)
-	{
-		vector<int>::iterator iter = find(dupa.begin(), dupa.end(), i);
-		if (iter == dupa.end())
-		{
-			resa.push_back(stracksa[i]);
-		}
-	}
+  for (int i = 0; i < rStracks1.size(); ++i) {
+    auto iter = std::find(duplicates_1.begin(), duplicates_1.end(), i);
+    if (iter == duplicates_1.end()) {
+      rRes1.push_back(rStracks1[i]);
+    }
+  }
 
-	for (int i = 0; i < stracksb.size(); i++)
-	{
-		vector<int>::iterator iter = find(dupb.begin(), dupb.end(), i);
-		if (iter == dupb.end())
-		{
-			resb.push_back(stracksb[i]);
-		}
-	}
+  for (int i = 0; i < rStracks2.size(); ++i) {
+    auto iter = std::find(duplicates_2.begin(), duplicates_2.end(), i);
+    if (iter == duplicates_2.end()) {
+      rRes2.push_back(rStracks2[i]);
+    }
+  }
 }
 
-void JDETracker::embedding_distance(vector<STrack*> &tracks, vector<STrack> &detections,
-	vector<vector<float> > &cost_matrix, int *cost_matrix_size, int *cost_matrix_size_size)
+void JDETracker::EmbeddingDistance(
+    std::vector<STrack*> &rTracks
+  , std::vector<STrack> &rDetections
+  , std::vector<std::vector<float>> &rCostMatrix
+  , int *pNumRows
+  , int *pNumCols)
 {
-	if (tracks.size() * detections.size() == 0)
-	{
-		*cost_matrix_size = tracks.size();
-		*cost_matrix_size_size = detections.size();
-		return;
-	}
+  if (rTracks.size() * rDetections.size() == 0) {
+    *pNumRows = rTracks.size();
+    *pNumCols = rDetections.size();
+    return;
+  }
 
-	for (int i = 0; i < tracks.size(); i++)
-	{
-		vector<float> cost_matrix_tmp;
-		vector<float> track_feature = tracks[i]->smooth_feat;
-		for (int j = 0; j < detections.size(); j++)
-		{
-			vector<float> det_feature = detections[j].curr_feat;
-			float feat_square = 0.0;
-			for (int k = 0; k < det_feature.size(); k++)
-			{
-				feat_square += (track_feature[k] - det_feature[k])*(track_feature[k] - det_feature[k]);
-			}
-			cost_matrix_tmp.push_back(sqrt(feat_square));
-		}
-		cost_matrix.push_back(cost_matrix_tmp);
-	}
-	*cost_matrix_size = tracks.size();
-	*cost_matrix_size_size = detections.size();
+  for (int i = 0; i < rTracks.size(); ++i) {
+    std::vector<float> cost_matrix_row;
+    auto track_feature = rTracks[i]->mSmoothFeat;
+    for (int j = 0; j < rDetections.size(); ++j) {
+      auto det_feature = rDetections[j].mCurrFeat;
+      float feat_square = 0.0;
+      for (int k = 0; k < det_feature.size(); ++k) {
+        feat_square += (track_feature[k] - det_feature[k]) *
+            (track_feature[k] - det_feature[k]);
+      }
+      cost_matrix_row.push_back(std::sqrt(feat_square));
+    }
+    rCostMatrix.push_back(cost_matrix_row);
+  }
+  *pNumRows = rTracks.size();
+  *pNumCols = rDetections.size();
 }
 
-void JDETracker::fuse_motion(vector<vector<float> > &cost_matrix, vector<STrack*> &tracks, vector<STrack> &detections,
-	bool only_position, float lambda_)
+void JDETracker::FuseMotion(
+    std::vector<std::vector<float>> &rCostMatrix
+  , std::vector<STrack*> &rTracks
+  , std::vector<STrack> &rDetections
+  , bool onlyPosition
+  , float coeff)
 {
-	if (cost_matrix.size() == 0)
-		return;
+  if (rCostMatrix.size() == 0) {
+    return;
+  }
 
-	int gating_dim = 0;
-	if (only_position)
-		gating_dim = 2;
-	else
-		gating_dim = 4;
+  auto gating_dim = onlyPosition ? 2 : 4;
+  float gating_threshold = mKalmanFilter.chi2inv95[gating_dim];
 
-	float gating_threshold = this->kalman_filter.chi2inv95[gating_dim];
+  std::vector<DETECTBOX> measurements;
+  for (int i = 0; i < rDetections.size(); ++i) {
+    DETECTBOX measurement;
+    std::vector<float> tlwh = rDetections[i].to_xyah();
+    measurement[0] = tlwh[0];
+    measurement[1] = tlwh[1];
+    measurement[2] = tlwh[2];
+    measurement[3] = tlwh[3];
+    measurements.push_back(measurement);
+  }
 
-	vector<DETECTBOX> measurements;
-	for (int i = 0; i < detections.size(); i++)
-	{
-		DETECTBOX measurement;
-		vector<float> tlwh_ = detections[i].to_xyah();
-		measurement[0] = tlwh_[0];
-		measurement[1] = tlwh_[1];
-		measurement[2] = tlwh_[2];
-		measurement[3] = tlwh_[3];
-		measurements.push_back(measurement);
-	}
+  for (int i = 0; i < rTracks.size(); ++i) {
+    auto gating_distance = mKalmanFilter.gating_distance(rTracks[i]->mMean,
+        rTracks[i]->mCovariance, measurements, onlyPosition);
 
-	for (int i = 0; i < tracks.size(); i++)
-	{
-		Eigen::Matrix<float, 1, -1> gating_distance = kalman_filter.gating_distance(
-			tracks[i]->mean, tracks[i]->covariance, measurements, only_position);
-
-		for (int j = 0; j < cost_matrix[i].size(); j++)
-		{
-			if (gating_distance[j] > gating_threshold)
-			{
-				cost_matrix[i][j] = FLT_MAX;
-			}
-			cost_matrix[i][j] = lambda_ * cost_matrix[i][j] + (1 - lambda_)*gating_distance[j];
-		}
-	}
+    for (int j = 0; j < rCostMatrix[i].size(); ++j) {
+      if (gating_distance[j] > gating_threshold) {
+        rCostMatrix[i][j] = FLT_MAX;
+      }
+      rCostMatrix[i][j] = coeff * rCostMatrix[i][j] + (1 - coeff) *
+          gating_distance[j];
+    }
+  }
 }
 
-void JDETracker::linear_assignment(vector<vector<float> > &cost_matrix, int cost_matrix_size, int cost_matrix_size_size, float thresh,
-	vector<vector<int> > &matches, vector<int> &unmatched_a, vector<int> &unmatched_b)
+void JDETracker::LinearAssignment(
+    std::vector<std::vector<float>> &rCostMatrix
+  , int numRows
+  , int numCols
+  , float threshold
+  , std::vector<std::vector<int>> &rMatches
+  , std::vector<int> &rUnmatched1
+  , std::vector<int> &rUnmatched2)
 {
-	if (cost_matrix.size() == 0)
-	{
-		for (int i = 0; i < cost_matrix_size; i++)
-		{
-			unmatched_a.push_back(i);
-		}
-		for (int i = 0; i < cost_matrix_size_size; i++)
-		{
-			unmatched_b.push_back(i);
-		}
-		return;
-	}
+  if (rCostMatrix.size() == 0) {
+    for (int i = 0; i < numRows; ++i) {
+      rUnmatched1.push_back(i);
+    }
+    for (int i = 0; i < numCols; ++i) {
+      rUnmatched2.push_back(i);
+    }
+    return;
+  }
 
-	vector<int> rowsol; vector<int> colsol;
-	float c = lapjv(cost_matrix, rowsol, colsol, true, 0.7);
-	for (int i = 0; i < rowsol.size(); i++)
-	{
-		if (rowsol[i] >= 0)
-		{
-			vector<int> match;
-			match.push_back(i);
-			match.push_back(rowsol[i]);
-			matches.push_back(match);
-		}
-		else
-		{
-			unmatched_a.push_back(i);
-		}
-	}
+  std::vector<int> rowsol;
+  std::vector<int> colsol;
+  auto c = this->lapjv(rCostMatrix, rowsol, colsol, true, threshold);
+  for (int i = 0; i < rowsol.size(); ++i) {
+    if (rowsol[i] >= 0) {
+      std::vector<int> match;
+      match.push_back(i);
+      match.push_back(rowsol[i]);
+      rMatches.push_back(match);
+    } else {
+      rUnmatched1.push_back(i);
+    }
+  }
 
-	for (int i = 0; i < colsol.size(); i++)
-	{
-		if (colsol[i] < 0)
-		{
-			unmatched_b.push_back(i);
-		}
-	}
+  for (int i = 0; i < colsol.size(); ++i) {
+    if (colsol[i] < 0) {
+      rUnmatched2.push_back(i);
+    }
+  }
 }
 
-vector<vector<float> > JDETracker::ious(vector<vector<float> > &atlbrs, vector<vector<float> > &btlbrs)
+std::vector<std::vector<float>> JDETracker::Ious(
+    std::vector<std::vector<float>> &atlbrs
+  , std::vector<std::vector<float>> &btlbrs)
 {
-	vector<vector<float> > ious;
-	if (atlbrs.size()*btlbrs.size() == 0)
-		return ious;
+  std::vector<std::vector<float>> ious;
+  if (atlbrs.size()*btlbrs.size() == 0) {
+    return ious;
+  }
 
-	ious.resize(atlbrs.size());
-	for (int i = 0; i < ious.size(); i++)
-	{
-		ious[i].resize(btlbrs.size());
-	}
+  ious.resize(atlbrs.size());
+  for (int i = 0; i < ious.size(); i++) {
+    ious[i].resize(btlbrs.size());
+  }
 
-	//bbox_ious
-	for (int k = 0; k < btlbrs.size(); k++)
-	{
-		vector<float> ious_tmp;
-		float box_area = (btlbrs[k][2] - btlbrs[k][0] + 1)*(btlbrs[k][3] - btlbrs[k][1] + 1);
-		for (int n = 0; n < atlbrs.size(); n++)
-		{
-			float iw = min(atlbrs[n][2], btlbrs[k][2]) - max(atlbrs[n][0], btlbrs[k][0]) + 1;
-			if (iw > 0)
-			{
-				float ih = min(atlbrs[n][3], btlbrs[k][3]) - max(atlbrs[n][1], btlbrs[k][1]) + 1;
-				if(ih > 0)
-				{
-					float ua = (atlbrs[n][2] - atlbrs[n][0] + 1)*(atlbrs[n][3] - atlbrs[n][1] + 1) + box_area - iw * ih;
-					ious[n][k] = iw * ih / ua;
-				}
-				else
-				{
-					ious[n][k] = 0.0;
-				}
-			}
-			else
-			{
-				ious[n][k] = 0.0;
-			}
-		}
-	}
+  // bbox_ious
+  for (int k = 0; k < btlbrs.size(); k++) {
+    std::vector<float> ious_tmp;
+    float box_area = (btlbrs[k][2] - btlbrs[k][0] + 1) *
+        (btlbrs[k][3] - btlbrs[k][1] + 1);
+    for (int n = 0; n < atlbrs.size(); n++) {
+      float iw = std::min(atlbrs[n][2], btlbrs[k][2]) -
+          std::max(atlbrs[n][0], btlbrs[k][0]) + 1;
+      if (iw > 0) {
+        float ih = std::min(atlbrs[n][3], btlbrs[k][3]) -
+            std::max(atlbrs[n][1], btlbrs[k][1]) + 1;
+        if (ih > 0) {
+          float ua = (atlbrs[n][2] - atlbrs[n][0] + 1) *
+              (atlbrs[n][3] - atlbrs[n][1] + 1) + box_area - iw * ih;
+          ious[n][k] = iw * ih / ua;
+        } else {
+          ious[n][k] = 0.0;
+        }
+      } else {
+        ious[n][k] = 0.0;
+      }
+    }
+  }
 
-	return ious;
+  return ious;
 }
 
-vector<vector<float> > JDETracker::iou_distance(vector<STrack*> &atracks, vector<STrack> &btracks, int &dist_size, int &dist_size_size)
+std::vector<std::vector<float>> JDETracker::IouDistance(
+    const std::vector<STrack*> &rTracks1
+  , const std::vector<STrack> &rTracks2
+  , int &rNumRows
+  , int &rNumCols)
 {
-	vector<vector<float> > atlbrs, btlbrs;
-	for (int i = 0; i < atracks.size(); i++)
-	{
-		atlbrs.push_back(atracks[i]->tlbr);
-	}
-	for (int i = 0; i < btracks.size(); i++)
-	{
-		btlbrs.push_back(btracks[i].tlbr);
-	}
+  std::vector<std::vector<float>> tlbrs_1;
+  std::vector<std::vector<float>> tlbrs_2;
+  for (int i = 0; i < rTracks1.size(); ++i) {
+    tlbrs_1.push_back(rTracks1[i]->mTlbr);
+  }
+  for (int i = 0; i < rTracks2.size(); ++i) {
+    tlbrs_2.push_back(rTracks2[i].mTlbr);
+  }
 
-	dist_size = atracks.size();
-	dist_size_size = btracks.size();
+  rNumRows = rTracks1.size();
+  rNumCols = rTracks2.size();
 
-	vector<vector<float> > _ious = ious(atlbrs, btlbrs);
-	vector<vector<float> > cost_matrix;
-	for (int i = 0; i < _ious.size();i++)
-	{
-		vector<float> _iou;
-		for (int j = 0; j < _ious[i].size(); j++)
-		{
-			_iou.push_back(1 - _ious[i][j]);
-		}
-		cost_matrix.push_back(_iou);
-	}
+  std::vector<std::vector<float>> ious = this->Ious(tlbrs_1, tlbrs_2);
+  std::vector<std::vector<float>> cost_matrix;
+  for (int i = 0; i < ious.size(); ++i) {
+    std::vector<float> iou;
+    for (int j = 0; j < ious[i].size(); ++j) {
+      iou.push_back(1 - ious[i][j]);
+    }
+    cost_matrix.push_back(iou);
+  }
 
-	return cost_matrix;
+  return cost_matrix;
 }
 
-vector<vector<float> > JDETracker::iou_distance(vector<STrack> &atracks, vector<STrack> &btracks)
+std::vector<std::vector<float>> JDETracker::IouDistance(
+    const std::vector<STrack> &rTracks1
+  , const std::vector<STrack> &rTracks2)
 {
-	vector<vector<float> > atlbrs, btlbrs;
-	for (int i = 0; i < atracks.size(); i++)
-	{
-		atlbrs.push_back(atracks[i].tlbr);
-	}
-	for (int i = 0; i < btracks.size(); i++)
-	{
-		btlbrs.push_back(btracks[i].tlbr);
-	}
+  std::vector<std::vector<float>> tlbrs_1;
+  std::vector<std::vector<float>> tlbrs_2;
+  for (int i = 0; i < rTracks1.size(); ++i) {
+    tlbrs_1.push_back(rTracks1[i].mTlbr);
+  }
+  for (int i = 0; i < rTracks2.size(); ++i) {
+    tlbrs_2.push_back(rTracks2[i].mTlbr);
+  }
 
-	vector<vector<float> > _ious = ious(atlbrs, btlbrs);
-	vector<vector<float> > cost_matrix;
-	for (int i = 0; i < _ious.size(); i++)
-	{
-		vector<float> _iou;
-		for (int j = 0; j < _ious[i].size(); j++)
-		{
-			_iou.push_back(1 - _ious[i][j]);
-		}
-		cost_matrix.push_back(_iou);
-	}
+  std::vector<std::vector<float>> ious = this->Ious(tlbrs_1, tlbrs_2);
+  std::vector<std::vector<float>> cost_matrix;
+  for (int i = 0; i < ious.size(); ++i) {
+    std::vector<float> iou;
+    for (int j = 0; j < ious[i].size(); ++j) {
+      iou.push_back(1 - ious[i][j]);
+    }
+    cost_matrix.push_back(iou);
+  }
 
-	return cost_matrix;
+  return cost_matrix;
 }
 
-double JDETracker::lapjv(const vector<vector<float> > &cost, vector<int> &rowsol, vector<int> &colsol,
-	bool extend_cost, float cost_limit, bool return_cost)
+double JDETracker::lapjv(
+    const std::vector<std::vector<float>> &cost
+  , std::vector<int>& rowsol
+  , std::vector<int>& colsol
+  , bool extend_cost
+  , float cost_limit
+  , bool return_cost)
 {
-	vector<vector<float> > cost_c;
-	cost_c.assign(cost.begin(), cost.end());
+  std::vector<std::vector<float> > cost_c;
+  cost_c.assign(cost.begin(), cost.end());
 
-	vector<vector<float> > cost_c_extended;
+  std::vector<std::vector<float> > cost_c_extended;
 
-	int n_rows = cost.size();
-	int n_cols = cost[0].size();
-	rowsol.resize(n_rows);
-	colsol.resize(n_cols);
+  int n_rows = cost.size();
+  int n_cols = cost[0].size();
+  rowsol.resize(n_rows);
+  colsol.resize(n_cols);
 
-	int n = 0;
-	if (n_rows == n_cols)
-	{
-		n = n_rows;
-	}
-	else
-	{
-		if (!extend_cost)
-		{
-			cout << "set extend_cost=True" << endl;
-			system("pause");
-			exit(0);
-		}
-	}
-		
-	if (extend_cost || cost_limit < LONG_MAX)
-	{
-		n = n_rows + n_cols;
-		cost_c_extended.resize(n);
-		for (int i = 0; i < cost_c_extended.size(); i++)
-			cost_c_extended[i].resize(n);
+  int n = 0;
+  if (n_rows == n_cols) {
+    n = n_rows;
+  } else if (!extend_cost) {
+    std::cout << "set extend_cost=True" << std::endl;
+    system("pause");
+    exit(0);
+  }
 
-		if (cost_limit < LONG_MAX)
-		{
-			for (int i = 0; i < cost_c_extended.size(); i++)
-			{
-				for (int j = 0; j < cost_c_extended[i].size(); j++)
-				{
-					cost_c_extended[i][j] = cost_limit / 2.0;
-				}
-			}
-		}
-		else
-		{
-			float cost_max = -1;
-			for (int i = 0; i < cost_c.size(); i++)
-			{
-				for (int j = 0; j < cost_c[i].size(); j++)
-				{
-					if (cost_c[i][j] > cost_max)
-						cost_max = cost_c[i][j];
-				}
-			}
-			for (int i = 0; i < cost_c_extended.size(); i++)
-			{
-				for (int j = 0; j < cost_c_extended[i].size(); j++)
-				{
-					cost_c_extended[i][j] = cost_max + 1;
-				}
-			}
-		}
+  if (extend_cost || cost_limit < FLT_MAX) {
+    n = n_rows + n_cols;
+    cost_c_extended.resize(n);
+    for (int i = 0; i < cost_c_extended.size(); i++) {
+      cost_c_extended[i].resize(n);
+    }
 
-		for (int i = n_rows; i < cost_c_extended.size(); i++)
-		{
-			for (int j = n_cols; j < cost_c_extended[i].size(); j++)
-			{
-				cost_c_extended[i][j] = 0;
-			}
-		}
-		for (int i = 0; i < n_rows; i++)
-		{
-			for (int j = 0; j < n_cols; j++)
-			{
-				cost_c_extended[i][j] = cost_c[i][j];
-			}
-		}
+    if (cost_limit < FLT_MAX) {
+      for (int i = 0; i < cost_c_extended.size(); i++) {
+        for (int j = 0; j < cost_c_extended[i].size(); j++) {
+          cost_c_extended[i][j] = cost_limit / 2.0;
+        }
+      }
+    } else {
+      float cost_max = -1;
+      for (int i = 0; i < cost_c.size(); i++) {
+        for (int j = 0; j < cost_c[i].size(); j++) {
+          if (cost_c[i][j] > cost_max) {
+            cost_max = cost_c[i][j];
+          }
+        }
+      }
+      for (int i = 0; i < cost_c_extended.size(); i++) {
+        for (int j = 0; j < cost_c_extended[i].size(); j++) {
+          cost_c_extended[i][j] = cost_max + 1;
+        }
+      }
+    }
 
-		cost_c.clear();
-		cost_c.assign(cost_c_extended.begin(), cost_c_extended.end());
-	}
+    for (int i = n_rows; i < cost_c_extended.size(); i++) {
+      for (int j = n_cols; j < cost_c_extended[i].size(); j++) {
+        cost_c_extended[i][j] = 0;
+      }
+    }
+    for (int i = 0; i < n_rows; i++) {
+      for (int j = 0; j < n_cols; j++) {
+        cost_c_extended[i][j] = cost_c[i][j];
+      }
+    }
 
-	double **cost_ptr;
-	cost_ptr = new double *[sizeof(double *) * n];
-	for (int i = 0; i < n; i++)
-		cost_ptr[i] = new double[sizeof(double) * n];
+    cost_c.clear();
+    cost_c.assign(cost_c_extended.begin(), cost_c_extended.end());
+  }
 
-	for (int i = 0; i < n; i++)
-	{
-		for (int j = 0; j < n; j++)
-		{
-			cost_ptr[i][j] = cost_c[i][j];
-		}
-	}
+  double** cost_ptr;
+  cost_ptr = new double *[sizeof(double *) * n];
+  for (int i = 0; i < n; i++) {
+    cost_ptr[i] = new double[sizeof(double) * n];
+  }
 
-	int* x_c = new int[sizeof(int) * n];
-	int *y_c = new int[sizeof(int) * n];
+  for (int i = 0; i < n; i++) {
+    for (int j = 0; j < n; j++) {
+      cost_ptr[i][j] = cost_c[i][j];
+    }
+  }
 
-	int ret = lapjv_internal(n, cost_ptr, x_c, y_c);
-	if (ret != 0)
-	{
-		cout << "Calculate Wrong!" << endl;
-		system("pause");
-		exit(0);
-	}
+  int* x_c = new int[sizeof(int) * n];
+  int* y_c = new int[sizeof(int) * n];
 
-	double opt = 0.0;
+  int ret = lapjv_internal(n, cost_ptr, x_c, y_c);
+  if (ret != 0) {
+    std::cout << "Calculate Wrong!" << std::endl;
+    system("pause");
+    exit(0);
+  }
 
-	if (n != n_rows)
-	{
-		for (int i = 0; i < n; i++)
-		{
-			if (x_c[i] >= n_cols)
-				x_c[i] = -1;
-			if (y_c[i] >= n_rows)
-				y_c[i] = -1;
-		}
-		for (int i = 0; i < n_rows; i++)
-		{
-			rowsol[i] = x_c[i];
-		}
-		for (int i = 0; i < n_cols; i++)
-		{
-			colsol[i] = y_c[i];
-		}
+  double opt = 0.0;
 
-		if (return_cost)
-		{
-			for (int i = 0; i < rowsol.size(); i++)
-			{
-				if (rowsol[i] != -1)
-				{
-					//cout << i << "\t" << rowsol[i] << "\t" << cost_ptr[i][rowsol[i]] << endl;
-					opt += cost_ptr[i][rowsol[i]];
-				}
-			}
-		}
-	}
-	else if (return_cost)
-	{
-		for (int i = 0; i < rowsol.size(); i++)
-		{
-			opt += cost_ptr[i][rowsol[i]];
-		}
-	}
+  if (n != n_rows) {
+    for (int i = 0; i < n; i++) {
+      if (x_c[i] >= n_cols) {
+        x_c[i] = -1;
+      }
+      if (y_c[i] >= n_rows) {
+        y_c[i] = -1;
+      }
+    }
+    for (int i = 0; i < n_rows; i++) {
+      rowsol[i] = x_c[i];
+    }
+    for (int i = 0; i < n_cols; i++) {
+      colsol[i] = y_c[i];
+    }
 
-	for (int i = 0; i < n; i++)
-	{
-		delete[]cost_ptr[i];
-	}
-	delete[]cost_ptr;
-	delete[]x_c;
-	delete[]y_c;
+    if (return_cost) {
+      for (int i = 0; i < rowsol.size(); i++) {
+        if (rowsol[i] != -1) {
+          // cout << i << "\t" << rowsol[i] << "\t"
+          //     << cost_ptr[i][rowsol[i]] << endl;
+          opt += cost_ptr[i][rowsol[i]];
+        }
+      }
+    }
+  } else if (return_cost) {
+    for (int i = 0; i < rowsol.size(); i++) {
+      opt += cost_ptr[i][rowsol[i]];
+    }
+  }
 
-	return opt;
+  for (int i = 0; i < n; i++) {
+    delete[]cost_ptr[i];
+  }
+  delete[]cost_ptr;
+  delete[]x_c;
+  delete[]y_c;
+
+  return opt;
 }
 
 Scalar JDETracker::get_color(int idx)
 {
-	idx += 3;
-	return Scalar(37 * idx % 255, 17 * idx % 255, 29 * idx % 255);
+  idx += 3;
+  return Scalar(37 * idx % 255, 17 * idx % 255, 29 * idx % 255);
 }

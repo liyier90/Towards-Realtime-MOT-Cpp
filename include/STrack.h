@@ -6,57 +6,78 @@ date: 08/19/2021
 
 #pragma once
 
+#include <vector>
+
 #include <opencv2/opencv.hpp>
 #include <torch/torch.h>
 #include <torch/script.h>
+
 #include "kalmanFilter.h"
 
 using namespace cv;
-using namespace std;
 
 enum TrackState { New = 0, Tracked, Lost, Removed };
 
 class STrack
 {
 public:
-	STrack(vector<float> tlwh_, float score, vector<float> temp_feat, int buffer_size=30);
+	STrack(
+      const std::vector<float> &rTlwh
+    , float score
+    , std::vector<float> features
+    , int bufferSize = 30);
+
 	~STrack();
 
-	vector<float> static tlbr_to_tlwh(vector<float> &tlbr);
-	void static multi_predict(vector<STrack*> &stracks, jde_kalman::KalmanFilter &kalman_filter);
-	void static_tlwh();
-	void static_tlbr();
-	vector<float> tlwh_to_xyah(vector<float> tlwh_tmp);
-	vector<float> to_xyah();
+	static std::vector<float> TlbrToTlwh(std::vector<float> &rTlbr);
+	static void MultiPredict(
+      std::vector<STrack*> &rStracks
+    , jde_kalman::KalmanFilter &rKalmanFilter);
+
+	void StaticTlwh();
+	void StaticTlbr();
+
+  std::vector<float> TlwhToXyah(const std::vector<float> &rTlwh);
+  std::vector<float> to_xyah();
+
 	void mark_lost();
-	void mark_removed();
-	int next_id();
-	int end_frame();
+	void MarkRemoved();
+	int NextId();
+	int EndFrame();
 	
-	void activate(jde_kalman::KalmanFilter &kalman_filter, int frame_id);
-	void re_activate(STrack &new_track, int frame_id, bool new_id = false);
-	void update(STrack &new_track, int frame_id, bool update_feature = true);
+	void Activate(
+      jde_kalman::KalmanFilter &rKalmanFilter
+    , int frameId);
+	void ReActivate(
+      STrack &rNewTrack
+    , int frameId
+    , bool newId = false);
+	void Update(
+      STrack &rNewTrack
+    , int frameId
+    , bool updateFeature = true);
 
-public:
-	bool is_activated;
-	int track_id;
-	int state;
-	vector<float> curr_feat;
-	vector<float> smooth_feat;
-	float alpha;
+  int mTrackId;
+	bool mIsActivated;
+	int mState;
 
-	vector<float> _tlwh;
-	vector<float> tlwh;
-	vector<float> tlbr;
-	int frame_id;
-	int tracklet_len;
-	int start_frame;
+  std::vector<float> mCurrFeat;
+  std::vector<float> mSmoothFeat;
+	float mAlpha;
 
-	KAL_MEAN mean;
-	KAL_COVA covariance;
-	float score;
+  std::vector<float> mTlwhCache;
+  std::vector<float> mTlwh;
+  std::vector<float> mTlbr;
+  float mScore;
+
+	int mFrameId;
+	int mStartFrame;
+  int mTrackletLen;
+
+	KAL_MEAN mMean;
+	KAL_COVA mCovariance;
 
 private:
-	void update_features(vector<float> temp_feat);
-	jde_kalman::KalmanFilter kalman_filter;
+	void UpdateFeatures(std::vector<float> feat);
+	jde_kalman::KalmanFilter mKalmanFilter;
 };
