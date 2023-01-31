@@ -2,12 +2,12 @@
 
 #include <vector>
 
-#include <Eigen/Core>
-#include <Eigen/Dense>
+#include <Eigen/Core>  // NOLINT
+#include <Eigen/Dense>  // NOLINT
 #include <opencv2/opencv.hpp>
 
 STrack::STrack(
-    const std::vector<float> &rTlwh,
+    std::vector<float> *pTlwh,
     float score,
     std::vector<float> features,
     int bufferSize)
@@ -15,7 +15,7 @@ STrack::STrack(
     mIsActivated {false},
     mState {TrackState::New},
     mAlpha {0.9},
-    mTlwhCache {rTlwh},
+    mTlwhCache {*pTlwh},
     mTlwh(4),
     mTlbr(4),
     mScore {score},
@@ -33,93 +33,22 @@ STrack::STrack(
 STrack::~STrack()
 {}
 
-void STrack::Activate(
-    jde_kalman::KalmanFilter &rKalmanFilter,
-    int frameId) {
-  mKalmanFilter = rKalmanFilter;
-  mTrackId = this->NextId();
-
-  std::vector<float> tlwh(4);
-  tlwh[0] = mTlwhCache[0];
-  tlwh[1] = mTlwhCache[1];
-  tlwh[2] = mTlwhCache[2];
-  tlwh[3] = mTlwhCache[3];
-
-  auto xyah = this->TlwhToXyah(tlwh);
-
-  DetectBox xyah_box;
-  xyah_box[0] = xyah[0];
-  xyah_box[1] = xyah[1];
-  xyah_box[2] = xyah[2];
-  xyah_box[3] = xyah[3];
-
-  auto mc = mKalmanFilter.initiate(xyah_box);
-  mMean = mc.first;
-  mCovariance = mc.second;
-
-  this->StaticTlwh();
-  this->StaticTlbr();
-
-  mTrackletLen = 0;
-  mState = TrackState::Tracked;
-  mFrameId = frameId;
-  mStartFrame = frameId;
+std::vector<float>* STrack::pTlbrToTlwh(std::vector<float> *pTlbr) {
+  (*pTlbr)[2] -= (*pTlbr)[0];
+  (*pTlbr)[3] -= (*pTlbr)[1];
+  return pTlbr;
 }
 
-void STrack::ReActivate(
-    STrack &rNewTrack,
-    int frameId,
-    bool newId) {
-  auto xyah = this->TlwhToXyah(rNewTrack.mTlwh);
-  DetectBox xyah_box;
-  xyah_box[0] = xyah[0];
-  xyah_box[1] = xyah[1];
-  xyah_box[2] = xyah[2];
-  xyah_box[3] = xyah[3];
-  auto mc = mKalmanFilter.Update(mMean, mCovariance, xyah_box);
-  mMean = mc.first;
-  mCovariance = mc.second;
-
-  this->StaticTlwh();
-  this->StaticTlbr();
-
-  this->UpdateFeatures(rNewTrack.mCurrFeat);
-  mTrackletLen = 0;
-  mState = TrackState::Tracked;
-  mIsActivated = true;
-  mFrameId = frameId;
-  if (newId) {
-    mTrackId = NextId();
-  }
-}
-
-void STrack::Update(
-    STrack &rNewTrack,
-    int frameId,
-    bool updateFeature) {
-  mFrameId = frameId;
-  mTrackletLen++;
-
-  auto xyah = this->TlwhToXyah(rNewTrack.mTlwh);
-  DetectBox xyah_box;
-  xyah_box[0] = xyah[0];
-  xyah_box[1] = xyah[1];
-  xyah_box[2] = xyah[2];
-  xyah_box[3] = xyah[3];
-
-  auto mc = mKalmanFilter.Update(mMean, mCovariance, xyah_box);
-  mMean = mc.first;
-  mCovariance = mc.second;
-
-  this->StaticTlwh();
-  this->StaticTlbr();
-
-  mState = TrackState::Tracked;
-  mIsActivated = true;
-
-  mScore = rNewTrack.mScore;
-  if (updateFeature) {
-    this->UpdateFeatures(rNewTrack.mCurrFeat);
+void STrack::MultiPredict(
+    const std::vector<STrack*> &rStracks,
+    const jde_kalman::KalmanFilter &rKalmanFilter) {
+  for (int i = 0; i < rStracks.size(); ++i) {
+    if (rStracks[i]->mState != TrackState::Tracked) {
+      rStracks[i]->mMean[7] = 0;
+    }
+    rKalmanFilter.Predict(&(rStracks[i]->mMean), &(rStracks[i]->mCovariance));
+    rStracks[i]->StaticTlwh();
+    rStracks[i]->StaticTlbr();
   }
 }
 
@@ -161,12 +90,6 @@ std::vector<float> STrack::ToXyah() const {
   return this->TlwhToXyah(mTlwh);
 }
 
-std::vector<float> STrack::TlbrToTlwh(std::vector<float> &rTlbr) {
-  rTlbr[2] -= rTlbr[0];
-  rTlbr[3] -= rTlbr[1];
-  return rTlbr;
-}
-
 void STrack::MarkLost() {
   mState = TrackState::Lost;
 }
@@ -177,12 +100,102 @@ void STrack::MarkRemoved() {
 
 int STrack::NextId() {
   static int _count = 0;
-  _count++;
+  ++_count;
   return _count;
 }
 
 int STrack::EndFrame() {
   return mFrameId;
+}
+
+void STrack::Activate(
+    const jde_kalman::KalmanFilter &rKalmanFilter,
+    int frameId) {
+  mKalmanFilter = rKalmanFilter;
+  mTrackId = this->NextId();
+
+  std::vector<float> tlwh(4);
+  tlwh[0] = mTlwhCache[0];
+  tlwh[1] = mTlwhCache[1];
+  tlwh[2] = mTlwhCache[2];
+  tlwh[3] = mTlwhCache[3];
+
+  auto xyah = this->TlwhToXyah(tlwh);
+
+  DetectBox xyah_box;
+  xyah_box[0] = xyah[0];
+  xyah_box[1] = xyah[1];
+  xyah_box[2] = xyah[2];
+  xyah_box[3] = xyah[3];
+
+  auto mc = mKalmanFilter.Initiate(xyah_box);
+  mMean = mc.first;
+  mCovariance = mc.second;
+
+  this->StaticTlwh();
+  this->StaticTlbr();
+
+  mTrackletLen = 0;
+  mState = TrackState::Tracked;
+  mFrameId = frameId;
+  mStartFrame = frameId;
+}
+
+void STrack::ReActivate(
+    const STrack &rNewTrack,
+    int frameId,
+    bool newId) {
+  auto xyah = this->TlwhToXyah(rNewTrack.mTlwh);
+  DetectBox xyah_box;
+  xyah_box[0] = xyah[0];
+  xyah_box[1] = xyah[1];
+  xyah_box[2] = xyah[2];
+  xyah_box[3] = xyah[3];
+  auto mc = mKalmanFilter.Update(mMean, mCovariance, xyah_box);
+  mMean = mc.first;
+  mCovariance = mc.second;
+
+  this->StaticTlwh();
+  this->StaticTlbr();
+
+  this->UpdateFeatures(rNewTrack.mCurrFeat);
+  mTrackletLen = 0;
+  mState = TrackState::Tracked;
+  mIsActivated = true;
+  mFrameId = frameId;
+  if (newId) {
+    mTrackId = NextId();
+  }
+}
+
+void STrack::Update(
+    const STrack &rNewTrack,
+    int frameId,
+    bool updateFeature) {
+  mFrameId = frameId;
+  ++mTrackletLen;
+
+  auto xyah = this->TlwhToXyah(rNewTrack.mTlwh);
+  DetectBox xyah_box;
+  xyah_box[0] = xyah[0];
+  xyah_box[1] = xyah[1];
+  xyah_box[2] = xyah[2];
+  xyah_box[3] = xyah[3];
+
+  auto mc = mKalmanFilter.Update(mMean, mCovariance, xyah_box);
+  mMean = mc.first;
+  mCovariance = mc.second;
+
+  this->StaticTlwh();
+  this->StaticTlbr();
+
+  mState = TrackState::Tracked;
+  mIsActivated = true;
+
+  mScore = rNewTrack.mScore;
+  if (updateFeature) {
+    this->UpdateFeatures(rNewTrack.mCurrFeat);
+  }
 }
 
 void STrack::UpdateFeatures(std::vector<float> feat) {
@@ -207,15 +220,3 @@ void STrack::UpdateFeatures(std::vector<float> feat) {
   }
 }
 
-void STrack::MultiPredict(
-    std::vector<STrack*> &rStracks,
-    jde_kalman::KalmanFilter &rKalmanFilter) {
-  for (int i = 0; i < rStracks.size(); ++i) {
-    if (rStracks[i]->mState != TrackState::Tracked) {
-      rStracks[i]->mMean[7] = 0;
-    }
-    rKalmanFilter.predict(rStracks[i]->mMean, rStracks[i]->mCovariance);
-    rStracks[i]->StaticTlwh();
-    rStracks[i]->StaticTlbr();
-  }
-}

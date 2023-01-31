@@ -1,12 +1,14 @@
-#ifndef UTILS_H_
-#define UTILS_H_
+#ifndef INCLUDE_UTILS_H_
+#define INCLUDE_UTILS_H_
 
 #include <cfloat>
-#include <opencv2/opencv.hpp>
-#include <torch/torch.h>
+#include <vector>
 
-namespace jde_util
-{
+#include <opencv2/opencv.hpp>
+#include <torch/torch.h>  // NOLINT
+
+
+namespace jde_util {
 cv::Scalar GetColor(int idx);
 
 cv::Size GetSize(
@@ -45,5 +47,5 @@ void ScaleCoords(
 torch::Tensor XywhToTlbr(torch::Tensor x);
 }  // namespace jde_util
 
-#endif  // UTILS_H_
+#endif  // INCLUDE_UTILS_H_
 

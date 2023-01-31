@@ -1,46 +1,50 @@
-#ifndef KALMANFILTER_H_
-#define KALMANFILTER_H_
+#ifndef INCLUDE_KALMANFILTER_H_
+#define INCLUDE_KALMANFILTER_H_
 
-#include <Eigen/Core>
-#include <Eigen/Dense>
+#include <vector>
+
+#include <Eigen/Core>  // NOLINT
+#include <Eigen/Dense>  // NOLINT
 
 #include "DataType.h"
 
-namespace jde_kalman
-{
-	class KalmanFilter
-	{
-	public:
-		static const double chi2inv95[10];
-		KalmanFilter();
-		KalmanData initiate(const DetectBox& measurement);
-		void predict(KalmanMean& mean, KalmanCov& covariance);
+namespace jde_kalman {
+class KalmanFilter {
+ public:
+  static const double chi2inv95[10];
 
-		KalmanHData Project(
-        const KalmanMean &rMean,
-        const KalmanCov &rCovariance) const;
+  KalmanFilter();
 
-		KalmanData Update(
-        const KalmanMean &rMean,
-        const KalmanCov &rCovariance,
-        const DetectBox &rMeasurement);
+  KalmanData Initiate(const DetectBox &rMeasurement) const;
 
-		Eigen::Matrix<float, 1, -1> GatingDistance(
-        const KalmanMean &rMean,
-        const KalmanCov &rCovariance,
-        const std::vector<DetectBox> &rMeasurements,
-        bool onlyPosition = false) const;
+  void Predict(
+      KalmanMean *pMean,
+      KalmanCov *pCovariance) const;
 
-	private:
-    static constexpr int mkNDim = 4;
-    static constexpr double mkDt = 1.0;
-		Eigen::Matrix<float, 8, 8, Eigen::RowMajor> mMotionMat;
-		Eigen::Matrix<float, 4, 8, Eigen::RowMajor> mUpdateMat;
-		float mStdWeightPosition;
-		float mStdWeightVelocity;
+  KalmanHData Project(
+      const KalmanMean &rMean,
+      const KalmanCov &rCovariance) const;
 
-	};
-}
+  KalmanData Update(
+      const KalmanMean &rMean,
+      const KalmanCov &rCovariance,
+      const DetectBox &rMeasurement);
 
-#endif  // KALMANFILTER_H_
- 
+  Eigen::Matrix<float, 1, -1> GatingDistance(
+      const KalmanMean &rMean,
+      const KalmanCov &rCovariance,
+      const std::vector<DetectBox> &rMeasurements,
+      bool onlyPosition = false) const;
+
+ private:
+  static constexpr int mkNDim = 4;
+  static constexpr double mkDt = 1.0;
+  Eigen::Matrix<float, 8, 8, Eigen::RowMajor> mMotionMat;
+  Eigen::Matrix<float, 4, 8, Eigen::RowMajor> mUpdateMat;
+  float mStdWeightPosition;
+  float mStdWeightVelocity;
+};
+}  // namespace jde_kalman
+
+#endif  // INCLUDE_KALMANFILTER_H_
+

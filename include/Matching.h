@@ -1,13 +1,12 @@
-#ifndef MATCHING_H_
-#define MATCHING_H_
+#ifndef INCLUDE_MATCHING_H_
+#define INCLUDE_MATCHING_H_
 
 #include <vector>
 
 #include "KalmanFilter.h"
 #include "STrack.h"
 
-namespace matching
-{
+namespace matching {
 void EmbeddingDistance(
     const std::vector<STrack*> &rTracks,
     const std::vector<STrack> &rDetections,
@@ -45,6 +44,6 @@ void LinearAssignment(
     std::vector<std::vector<int>> *pMatches,
     std::vector<int> *pUnmatched1,
     std::vector<int> *pUnmatched2);
-}
+}  // namespace matching
 
-#endif  // MATCHING_H_
+#endif  // INCLUDE_MATCHING_H_

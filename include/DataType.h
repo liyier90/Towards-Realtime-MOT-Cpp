@@ -1,11 +1,11 @@
-#ifndef DATATYPE_H_
-#define DATATYPE_H_
+#ifndef INCLUDE_DATATYPE_H_
+#define INCLUDE_DATATYPE_H_
 
 #include <utility>
 #include <vector>
 
-#include <Eigen/Core>
-#include <Eigen/Dense>
+#include <Eigen/Core>  // NOLINT
+#include <Eigen/Dense>  // NOLINT
 
 typedef Eigen::Matrix<float, 1, 4, Eigen::RowMajor> DetectBox;
 typedef Eigen::Matrix<float, -1, 4, Eigen::RowMajor> DetectBoxes;
@@ -34,5 +34,5 @@ using KalmanHData = std::pair<KalmanHMean, KalmanHCov>;
 // LinearAssignment:
 // typedef Eigen::Matrix<float, -1, -1, Eigen::RowMajor> DynamicMat;
 
-#endif  // DATATYPE_H_
+#endif  // INCLUDE_DATATYPE_H_
 

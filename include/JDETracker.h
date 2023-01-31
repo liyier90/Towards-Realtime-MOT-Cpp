@@ -1,4 +1,5 @@
-#pragma once
+#ifndef INCLUDE_JDETRACKER_H_
+#define INCLUDE_JDETRACKER_H_
 
 #include <cfloat>
 #include <string>
@@ -8,54 +9,54 @@
 
 #include "STrack.h"
 
-class JDETracker
-{
-public:
-	JDETracker(
+class JDETracker {
+ public:
+  JDETracker(
       const std::string &rModelPath
     , int frameRate = 30
     , int trackBuffer = 30);
-	~JDETracker();
+  ~JDETracker();
 
-	void Update(cv::Mat image);
+  void Update(cv::Mat image);
 
-	int mNetWidth;
-	int mNetHeight;
+  int mNetWidth;
+  int mNetHeight;
 
-private:
+ private:
   cv::Mat Preprocess(cv::Mat image);
 
-	torch::jit::script::Module mModel;
-	torch::Device *mpDevice;
+  torch::jit::script::Module mModel;
+  torch::Device *mpDevice;
 
-	float mScoreThreshold;
-	float mNmsThreshold;
-	int mFrameId;
-	int mMaxTimeLost;
+  float mScoreThreshold;
+  float mNmsThreshold;
+  int mFrameId;
+  int mMaxTimeLost;
 
-	std::vector<STrack> mTrackedStracks;
-	std::vector<STrack> mLostStracks;
-	std::vector<STrack> mRemovedStracks;
-	jde_kalman::KalmanFilter mKalmanFilter;
+  std::vector<STrack> mTrackedStracks;
+  std::vector<STrack> mLostStracks;
+  std::vector<STrack> mRemovedStracks;
+  jde_kalman::KalmanFilter mKalmanFilter;
 };
 
-namespace strack_util
-{
+namespace strack_util {
 std::vector<STrack*> CombineStracks(
-    std::vector<STrack*> &rStracks1
-  , std::vector<STrack> &rStracks2);
+    const std::vector<STrack*> &rStracks1,
+    const std::vector<STrack> &rStracks2);
 
 std::vector<STrack> CombineStracks(
-    std::vector<STrack> &rStracks1
-  , std::vector<STrack> &rStracks2);
+    const std::vector<STrack> &rStracks1
+  , const std::vector<STrack> &rStracks2);
 
 void RemoveDuplicateStracks(
     const std::vector<STrack> &rStracks1
   , const std::vector<STrack> &rStracks2
-  , std::vector<STrack> &rRes1
-  , std::vector<STrack> &rRes2);
+  , std::vector<STrack> *pRes1
+  , std::vector<STrack> *pRes2);
 
 std::vector<STrack> SubstractStracks(
-    std::vector<STrack> &rStracks1
-  , std::vector<STrack> &rStracks2);
+    const std::vector<STrack> &rStracks1
+  , const std::vector<STrack> &rStracks2);
 }  // namespace  strack_util
+
+#endif  // INCLUDE_JDETRACKER_H_

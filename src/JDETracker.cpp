@@ -2,7 +2,9 @@
 
 #include <fstream>
 #include <iostream>
+#include <unordered_map>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include <opencv2/opencv.hpp>
@@ -11,9 +13,9 @@
 #include "Utils.h"
 
 JDETracker::JDETracker(
-    const std::string &rModelPath
-  , int frameRate
-  , int trackBuffer)
+    const std::string &rModelPath,
+    int frameRate,
+    int trackBuffer)
   : mNetWidth {576},
     mNetHeight {320},
     mScoreThreshold {0.5},
@@ -25,8 +27,7 @@ JDETracker::JDETracker(
   if (torch::cuda::is_available()) {
     std::cout << "CUDA available! Test on GPU." << std::endl;
     device_type = torch::kCUDA;
-  }
-  else {
+  } else {
     std::cout << "Test on CPU." << std::endl;
     device_type = torch::kCPU;
   }
@@ -42,21 +43,18 @@ JDETracker::JDETracker(
   std::cout << "Done!" << std::endl;
 }
 
-JDETracker::~JDETracker()
-{
+JDETracker::~JDETracker() {
   delete mpDevice;
 }
 
-void JDETracker::Update(cv::Mat image)
-{
+void JDETracker::Update(cv::Mat image) {
   auto padded_image = this->Preprocess(image);
   auto img_tensor = torch::from_blob(padded_image.data,
       {mNetHeight, mNetWidth, 3}, torch::kFloat32);
   img_tensor = torch::unsqueeze(img_tensor, 0).permute({0, 3, 1, 2});
 
   // Create a std::vector of inputs.
-  std::vector<torch::jit::IValue> inputs;
-  inputs.push_back(img_tensor.to(*mpDevice));
+  std::vector<torch::jit::IValue> inputs = {img_tensor.to(*mpDevice)};
 
   /// Step 1: Network forward, get detections & embeddings
   ++mFrameId;
@@ -114,7 +112,7 @@ void JDETracker::Update(cv::Mat image)
         features.push_back(dets[i][j].item<float>());
       }
 
-      STrack strack(STrack::TlbrToTlwh(tlbr), score, features);
+      STrack strack(STrack::pTlbrToTlwh(&tlbr), score, features);
       detections.push_back(strack);
     }
   }
@@ -245,17 +243,20 @@ void JDETracker::Update(cv::Mat image)
       removed_stracks.push_back(mLostStracks[i]);
     }
   }
-  
+
   for (int i = 0; i < mTrackedStracks.size(); ++i) {
     if (mTrackedStracks[i].mState == TrackState::Tracked) {
       tracked_stracks_swap.push_back(mTrackedStracks[i]);
     }
   }
   mTrackedStracks.clear();
-  mTrackedStracks.assign(tracked_stracks_swap.begin(), tracked_stracks_swap.end());
+  mTrackedStracks.assign(tracked_stracks_swap.begin(),
+      tracked_stracks_swap.end());
 
-  mTrackedStracks = strack_util::CombineStracks(mTrackedStracks, activated_stracks);
-  mTrackedStracks = strack_util::CombineStracks(mTrackedStracks, refind_stracks);
+  mTrackedStracks = strack_util::CombineStracks(mTrackedStracks,
+      activated_stracks);
+  mTrackedStracks = strack_util::CombineStracks(mTrackedStracks,
+      refind_stracks);
 
   mLostStracks = strack_util::SubstractStracks(mLostStracks, mTrackedStracks);
   for (int i = 0; i < lost_stracks.size(); ++i) {
@@ -267,7 +268,8 @@ void JDETracker::Update(cv::Mat image)
     mRemovedStracks.push_back(removed_stracks[i]);
   }
 
-  strack_util::RemoveDuplicateStracks(mTrackedStracks, mLostStracks, res_1, res_2);
+  strack_util::RemoveDuplicateStracks(mTrackedStracks, mLostStracks, &res_1,
+      &res_2);
 
   mTrackedStracks.clear();
   mTrackedStracks.assign(res_1.begin(), res_1.end());
@@ -293,8 +295,7 @@ void JDETracker::Update(cv::Mat image)
   cv::imshow("test", image);
 }
 
-cv::Mat JDETracker::Preprocess(cv::Mat image)
-{
+cv::Mat JDETracker::Preprocess(cv::Mat image) {
   auto padded_image = jde_util::Letterbox(image, mNetHeight, mNetWidth);
 
   // cv::Mat img_rgb;
@@ -306,13 +307,11 @@ cv::Mat JDETracker::Preprocess(cv::Mat image)
   return padded_image;
 }
 
-namespace strack_util
-{
+namespace strack_util {
 std::vector<STrack*> CombineStracks(
-    std::vector<STrack*> &rStracks1
-  , std::vector<STrack> &rStracks2)
-{
-  std::map<int, int> exists;
+    const std::vector<STrack*> &rStracks1,
+    const std::vector<STrack> &rStracks2) {
+  std::unordered_map<int, int> exists;
   std::vector<STrack*> res;
   for (int i = 0; i < rStracks1.size(); ++i) {
     exists.insert(std::pair<int, int>(rStracks1[i]->mTrackId, 1));
@@ -322,17 +321,16 @@ std::vector<STrack*> CombineStracks(
     auto tid = rStracks2[i].mTrackId;
     if (!exists[tid] || exists.count(tid) == 0) {
       exists[tid] = 1;
-      res.push_back(&rStracks2[i]);
+      res.push_back(const_cast<STrack*>(&rStracks2[i]));
     }
   }
   return res;
 }
 
 std::vector<STrack> CombineStracks(
-    std::vector<STrack>& rStracks1 
-  , std::vector<STrack>& rStracks2)
-{
-  std::map<int, int> exists;
+    const std::vector<STrack> &rStracks1,
+    const std::vector<STrack> &rStracks2) {
+  std::unordered_map<int, int> exists;
   std::vector<STrack> res;
   for (int i = 0; i < rStracks1.size(); ++i) {
     exists.insert(std::pair<int, int>(rStracks1[i].mTrackId, 1));
@@ -349,11 +347,10 @@ std::vector<STrack> CombineStracks(
 }
 
 void RemoveDuplicateStracks(
-    const std::vector<STrack> &rStracks1
-  , const std::vector<STrack> &rStracks2
-  , std::vector<STrack> &rRes1
-  , std::vector<STrack> &rRes2)
-{
+    const std::vector<STrack> &rStracks1,
+    const std::vector<STrack> &rStracks2,
+    std::vector<STrack> *pRes1,
+    std::vector<STrack> *pRes2) {
   auto distances = matching::IouDistance(rStracks1, rStracks2);
   std::vector<std::pair<int, int>> pairs;
   for (int i = 0; i < distances.size(); ++i) {
@@ -381,23 +378,22 @@ void RemoveDuplicateStracks(
   for (int i = 0; i < rStracks1.size(); ++i) {
     auto iter = std::find(duplicates_1.begin(), duplicates_1.end(), i);
     if (iter == duplicates_1.end()) {
-      rRes1.push_back(rStracks1[i]);
+      pRes1->push_back(rStracks1[i]);
     }
   }
 
   for (int i = 0; i < rStracks2.size(); ++i) {
     auto iter = std::find(duplicates_2.begin(), duplicates_2.end(), i);
     if (iter == duplicates_2.end()) {
-      rRes2.push_back(rStracks2[i]);
+      pRes2->push_back(rStracks2[i]);
     }
   }
 }
 
 std::vector<STrack> SubstractStracks(
-    std::vector<STrack> &rStracks1
-  , std::vector<STrack> &rStracks2)
-{
-  std::map<int, STrack> stracks;
+    const std::vector<STrack> &rStracks1,
+    const std::vector<STrack> &rStracks2) {
+  std::unordered_map<int, STrack> stracks;
   for (int i = 0; i < rStracks1.size(); ++i) {
     stracks.insert(
         std::pair<int, STrack>(rStracks1[i].mTrackId, rStracks1[i]));
@@ -415,4 +411,4 @@ std::vector<STrack> SubstractStracks(
 
   return res;
 }
-}  // strack_util
+}  // namespace strack_util

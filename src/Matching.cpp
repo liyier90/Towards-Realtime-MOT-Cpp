@@ -3,8 +3,7 @@
 #include "KalmanFilter.h"
 #include "Utils.h"
 
-namespace matching
-{
+namespace matching {
 void EmbeddingDistance(
     const std::vector<STrack*> &rTracks,
     const std::vector<STrack> &rDetections,

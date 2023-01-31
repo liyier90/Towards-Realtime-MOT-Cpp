@@ -1,14 +1,8 @@
-/*
-author: samylee
-github: https://github.com/samylee
-date: 08/19/2021
-*/
-
 #include "KalmanFilter.h"
+
 #include <Eigen/Cholesky>
 
-namespace jde_kalman
-{
+namespace jde_kalman {
 const double KalmanFilter::chi2inv95[10] = {
     0,
     3.8415,
@@ -33,75 +27,79 @@ KalmanFilter::KalmanFilter()
   }
 }
 
-KalmanData KalmanFilter::initiate(const DetectBox &measurement)
-{
-  DetectBox mean_pos = measurement;
+KalmanData KalmanFilter::Initiate(const DetectBox &rMeasurement) const {
+  auto mean_pos = rMeasurement;
   DetectBox mean_vel;
   for (int i = 0; i < 4; i++) {
-    mean_vel(i) = 0;
+    mean_vel[i] = 0;
   }
 
   KalmanMean mean;
   for (int i = 0; i < 8; i++) {
     if (i < 4) {
-      mean(i) = mean_pos(i);
+      mean[i] = mean_pos[i];
     } else {
-      mean(i) = mean_vel(i - 4);
+      mean[i] = mean_vel[i - 4];
     }
   }
 
-  KalmanMean std;
-  std(0) = 2 * mStdWeightPosition * measurement[3];
-  std(1) = 2 * mStdWeightPosition * measurement[3];
-  std(2) = 1e-2;
-  std(3) = 2 * mStdWeightPosition * measurement[3];
-  std(4) = 10 * mStdWeightVelocity * measurement[3];
-  std(5) = 10 * mStdWeightVelocity * measurement[3];
-  std(6) = 1e-5;
-  std(7) = 10 * mStdWeightVelocity * measurement[3];
+  KalmanMean std_dev;
+  std_dev <<
+      2 * mStdWeightPosition * rMeasurement[3],
+      2 * mStdWeightPosition * rMeasurement[3],
+      1e-2,
+      2 * mStdWeightPosition * rMeasurement[3],
+      10 * mStdWeightVelocity * rMeasurement[3],
+      10 * mStdWeightVelocity * rMeasurement[3],
+      1e-5,
+      10 * mStdWeightVelocity * rMeasurement[3];
 
-  KalmanMean tmp = std.array().square();
+  KalmanMean tmp = std_dev.array().square();
   KalmanCov var = tmp.asDiagonal();
   return std::make_pair(mean, var);
 }
 
-void KalmanFilter::predict(KalmanMean &mean, KalmanCov &covariance)
-{
+void KalmanFilter::Predict(
+    KalmanMean *pMean,
+    KalmanCov *pCovariance) const {
   // revise the data;
   DetectBox std_pos;
-  std_pos << mStdWeightPosition * mean(3),
-      mStdWeightPosition * mean(3),
+  std_pos <<
+      mStdWeightPosition * (*pMean)[3],
+      mStdWeightPosition * (*pMean)[3],
       1e-2,
-      mStdWeightPosition * mean(3);
+      mStdWeightPosition * (*pMean)[3];
   DetectBox std_vel;
-  std_vel << mStdWeightVelocity * mean(3),
-      mStdWeightVelocity * mean(3),
+  std_vel <<
+      mStdWeightVelocity * (*pMean)[3],
+      mStdWeightVelocity * (*pMean)[3],
       1e-5,
-      mStdWeightVelocity * mean(3);
+      mStdWeightVelocity * (*pMean)[3];
   KalmanMean tmp;
   tmp.block<1, 4>(0, 0) = std_pos;
   tmp.block<1, 4>(0, 4) = std_vel;
   tmp = tmp.array().square();
   KalmanCov motion_cov = tmp.asDiagonal();
-  KalmanMean mean1 = mMotionMat * mean.transpose();
-  KalmanCov covariance1 = mMotionMat * covariance * mMotionMat.transpose();
-  covariance1 += motion_cov;
+  KalmanMean mean = mMotionMat * pMean->transpose();
+  KalmanCov covariance = mMotionMat * (*pCovariance) * mMotionMat.transpose();
+  covariance += motion_cov;
 
-  mean = mean1;
-  covariance = covariance1;
+  *pMean = mean;
+  *pCovariance = covariance;
 }
 
 KalmanHData KalmanFilter::Project(
     const KalmanMean &rMean,
     const KalmanCov &rCovariance) const {
-  DetectBox std;
-  std << mStdWeightPosition * rMean(3),
-      mStdWeightPosition * rMean(3),
+  DetectBox std_dev;
+  std_dev <<
+      mStdWeightPosition * rMean[3],
+      mStdWeightPosition * rMean[3],
       1e-1,
-      mStdWeightPosition * rMean(3);
+      mStdWeightPosition * rMean[3];
   KalmanHMean mean = mUpdateMat * rMean.transpose();
-  KalmanHCov covariance = mUpdateMat * rCovariance * (mUpdateMat.transpose());
-  Eigen::Matrix<float, 4, 4> diag = std.asDiagonal();
+  KalmanHCov covariance = mUpdateMat * rCovariance * mUpdateMat.transpose();
+  Eigen::Matrix<float, 4, 4> diag = std_dev.asDiagonal();
   diag = diag.array().square().matrix();
   covariance += diag;
   return std::make_pair(mean, covariance);
@@ -119,9 +117,9 @@ KalmanData KalmanFilter::Update(
   //     check_finite=False)
   // kalman_gain = scipy.linalg.cho_solve((cho_factor, lower),
   //     np.dot(covariance, self.mUpdateMat.T).T, check_finite=False).T
-  Eigen::Matrix<float, 4, 8> B = (rCovariance * (mUpdateMat.transpose()))
+  Eigen::Matrix<float, 4, 8> B = (rCovariance * mUpdateMat.transpose())
       .transpose();
-  Eigen::Matrix<float, 8, 4> kalman_gain = (projected_cov.llt().solve(B))
+  Eigen::Matrix<float, 8, 4> kalman_gain = projected_cov.llt().solve(B)
       .transpose();
   Eigen::Matrix<float, 1, 4> innovation = rMeasurement - projected_mean;
   auto tmp = innovation * kalman_gain.transpose();
