@@ -1,6 +1,7 @@
 #ifndef INCLUDE_UTILS_H_
 #define INCLUDE_UTILS_H_
 
+#include "STrack.h"
 #include <cfloat>
 #include <vector>
 
@@ -43,6 +44,10 @@ void ScaleCoords(
     cv::Size imgSize,
     cv::Size origImgSize,
     torch::Tensor *pCoords);
+
+void Visualize(
+    cv::Mat image,
+    const std::vector<STrack> &rStracks);
 
 torch::Tensor XywhToTlbr(torch::Tensor x);
 }  // namespace jde_util

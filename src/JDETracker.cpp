@@ -47,7 +47,7 @@ JDETracker::~JDETracker() {
   delete mpDevice;
 }
 
-void JDETracker::Update(cv::Mat image) {
+std::vector<STrack> JDETracker::Update(cv::Mat image) {
   auto padded_image = this->Preprocess(image);
   auto img_tensor = torch::from_blob(padded_image.data,
       {mNetHeight, mNetWidth, 3}, torch::kFloat32);
@@ -96,14 +96,16 @@ void JDETracker::Update(cv::Mat image) {
         &coords);
     // [x1, y1, x2, y2, object_conf, class_score, class_pred]
     for (int i = 0; i < dets.sizes()[0]; ++i) {
-      std::vector<float> tlbr(4);
-      tlbr[0] = dets[i][0].item<float>();
-      tlbr[1] = dets[i][1].item<float>();
-      tlbr[2] = dets[i][2].item<float>();
-      tlbr[3] = dets[i][3].item<float>();
+      std::vector<float> tlbr = {
+        dets[i][0].item<float>(),
+        dets[i][1].item<float>(),
+        dets[i][2].item<float>(),
+        dets[i][3].item<float>()
+      };
 
-      cv::rectangle(image, cv::Rect(cv::Point(tlbr[0], tlbr[1]),
-            cv::Point(tlbr[2], tlbr[3])), cv::Scalar(0, 255, 0), 2);
+      cv::rectangle(image,
+          cv::Rect(cv::Point(tlbr[0], tlbr[1]), cv::Point(tlbr[2], tlbr[3])),
+          cv::Scalar(0, 255, 0), 2);
 
       auto score = dets[i][4].item<float>();
 
@@ -159,8 +161,7 @@ void JDETracker::Update(cv::Mat image) {
   for (int i = 0; i < u_detection.size(); ++i) {
     detections_tmp.push_back(detections[u_detection[i]]);
   }
-  detections.clear();
-  detections.assign(detections_tmp.begin(), detections_tmp.end());
+  detections = detections_tmp;
 
   for (int i = 0; i < u_track.size(); ++i) {
     if (strack_pool[u_track[i]]->mState == TrackState::Tracked) {
@@ -168,7 +169,6 @@ void JDETracker::Update(cv::Mat image) {
     }
   }
 
-  dists.clear();
   dists = matching::IouDistance(r_tracked_stracks, detections, &num_rows,
       &num_cols);
 
@@ -203,10 +203,8 @@ void JDETracker::Update(cv::Mat image) {
   for (int i = 0; i < u_detection.size(); ++i) {
     detections_tmp.push_back(detections[u_detection[i]]);
   }
-  detections.clear();
-  detections.assign(detections_tmp.begin(), detections_tmp.end());
+  detections = detections_tmp;
 
-  dists.clear();
   dists = matching::IouDistance(unconfirmed, detections, &num_rows, &num_cols);
 
   matches.clear();
@@ -249,9 +247,7 @@ void JDETracker::Update(cv::Mat image) {
       tracked_stracks_swap.push_back(mTrackedStracks[i]);
     }
   }
-  mTrackedStracks.clear();
-  mTrackedStracks.assign(tracked_stracks_swap.begin(),
-      tracked_stracks_swap.end());
+  mTrackedStracks = tracked_stracks_swap;
 
   mTrackedStracks = strack_util::CombineStracks(mTrackedStracks,
       activated_stracks);
@@ -271,36 +267,21 @@ void JDETracker::Update(cv::Mat image) {
   strack_util::RemoveDuplicateStracks(mTrackedStracks, mLostStracks, &res_1,
       &res_2);
 
-  mTrackedStracks.clear();
-  mTrackedStracks.assign(res_1.begin(), res_1.end());
-  mLostStracks.clear();
-  mLostStracks.assign(res_2.begin(), res_2.end());
+  mTrackedStracks = res_1;
+  mLostStracks = res_2;
 
   for (int i = 0; i < mTrackedStracks.size(); ++i) {
     if (mTrackedStracks[i].mIsActivated) {
       output_stracks.push_back(mTrackedStracks[i]);
     }
   }
-
-  for (int i = 0; i < output_stracks.size(); ++i) {
-    std::vector<float> tlwh = output_stracks[i].mTlwh;
-    bool vertical = tlwh[2] / tlwh[3] > 1.6;
-    if (tlwh[2] * tlwh[3] > 200 && !vertical) {
-      cv::Scalar s = jde_util::GetColor(output_stracks[i].mTrackId);
-      cv::rectangle(image, cv::Rect(tlwh[0], tlwh[1], tlwh[2], tlwh[3]), s, 2);
-      cv::putText(image, std::to_string(output_stracks[i].mTrackId),
-          cv::Point(tlwh[0], tlwh[1]), 0, 0.6, s, 2);
-    }
-  }
-  cv::imshow("test", image);
+  return output_stracks;
 }
 
 cv::Mat JDETracker::Preprocess(cv::Mat image) {
   auto padded_image = jde_util::Letterbox(image, mNetHeight, mNetWidth);
 
-  // cv::Mat img_rgb;
   cv::cvtColor(padded_image, padded_image, cv::COLOR_BGR2RGB);
-  // cv::Mat img_float;
   padded_image.convertTo(padded_image, CV_32FC3);
   padded_image /= 255.0;
 

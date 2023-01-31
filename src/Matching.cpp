@@ -51,7 +51,7 @@ void FuseMotion(
   std::vector<DetectBox> measurements;
   for (int i = 0; i < rDetections.size(); ++i) {
     DetectBox measurement;
-    std::vector<float> xyah = rDetections[i].ToXyah();
+    auto xyah = rDetections[i].ToXyah();
     measurement[0] = xyah[0];
     measurement[1] = xyah[1];
     measurement[2] = xyah[2];

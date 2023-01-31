@@ -283,6 +283,22 @@ void ScaleCoords(
   *pCoords = torch::clamp(*pCoords, 0);
 }
 
+void Visualize(
+    cv::Mat image,
+    const std::vector<STrack> &rStracks) {
+  for (int i = 0; i < rStracks.size(); ++i) {
+    std::vector<float> tlwh = rStracks[i].mTlwh;
+    bool vertical = tlwh[2] / tlwh[3] > 1.6;
+    if (tlwh[2] * tlwh[3] > 200 && !vertical) {
+      cv::Scalar s = jde_util::GetColor(rStracks[i].mTrackId);
+      cv::rectangle(image, cv::Rect(tlwh[0], tlwh[1], tlwh[2], tlwh[3]), s, 2);
+      cv::putText(image, std::to_string(rStracks[i].mTrackId),
+          cv::Point(tlwh[0], tlwh[1]), 0, 0.6, s, 2);
+    }
+  }
+  cv::imshow("test", image);
+}
+
 torch::Tensor XywhToTlbr(torch::Tensor x) {
   auto y = torch::zeros_like(x);
   y.slice(1, 0, 1) = x.slice(1, 0, 1) - x.slice(1, 2, 3) / 2;

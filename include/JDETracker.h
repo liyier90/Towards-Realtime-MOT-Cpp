@@ -17,7 +17,7 @@ class JDETracker {
     , int trackBuffer = 30);
   ~JDETracker();
 
-  void Update(cv::Mat image);
+  std::vector<STrack> Update(cv::Mat image);
 
   int mNetWidth;
   int mNetHeight;

@@ -32,8 +32,10 @@ int main() {
     cv::resize(image, image, size);
 
     auto start_time = std::chrono::high_resolution_clock::now();
-    tracker.Update(image);
+    auto stracks = tracker.Update(image);
     auto end_time = std::chrono::high_resolution_clock::now();
+
+    jde_util::Visualize(image, stracks);
 
     std::chrono::duration<double> elapsed = end_time - start_time;
     total_elapsed += elapsed;
