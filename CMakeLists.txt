@@ -13,10 +13,11 @@ set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${TORCH_CXX_FLAGS}")
 set(SOURCES
     src/main.cpp
     src/JDETracker.cpp
-    src/kalmanFilter.cpp
-    src/lapjv.cpp
+    src/KalmanFilter.cpp
+    src/LapJv.cpp
+    src/Matching.cpp
     src/STrack.cpp
-    src/utils.cpp
+    src/Utils.cpp
 )
 
 add_executable(jde ${SOURCES})

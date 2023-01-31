@@ -1,9 +1,3 @@
-/*
-author: samylee
-github: https://github.com/samylee
-date: 08/19/2021
-*/
-
 #pragma once
 
 #include <vector>
@@ -12,9 +6,7 @@ date: 08/19/2021
 #include <torch/torch.h>
 #include <torch/script.h>
 
-#include "kalmanFilter.h"
-
-using namespace cv;
+#include "KalmanFilter.h"
 
 enum TrackState { New = 0, Tracked, Lost, Removed };
 
@@ -37,10 +29,10 @@ public:
 	void StaticTlwh();
 	void StaticTlbr();
 
-  std::vector<float> TlwhToXyah(const std::vector<float> &rTlwh);
-  std::vector<float> to_xyah();
+  std::vector<float> TlwhToXyah(const std::vector<float> &rTlwh) const;
+  std::vector<float> ToXyah() const;
 
-	void mark_lost();
+	void MarkLost();
 	void MarkRemoved();
 	int NextId();
 	int EndFrame();
@@ -74,8 +66,8 @@ public:
 	int mStartFrame;
   int mTrackletLen;
 
-	KAL_MEAN mMean;
-	KAL_COVA mCovariance;
+	KalmanMean mMean;
+	KalmanCov mCovariance;
 
 private:
 	void UpdateFeatures(std::vector<float> feat);
