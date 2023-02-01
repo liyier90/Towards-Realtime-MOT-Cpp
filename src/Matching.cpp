@@ -1,5 +1,6 @@
 #include "Matching.h"
 
+#include "DataType.h"
 #include "KalmanFilter.h"
 #include "Utils.h"
 
@@ -16,22 +17,22 @@ void EmbeddingDistance(
     return;
   }
 
-  for (int i = 0; i < rTracks.size(); ++i) {
-    std::vector<float> cost_matrix_row;
+  *pNumRows = rTracks.size();
+  *pNumCols = rDetections.size();
+  for (int i = 0; i < *pNumRows; ++i) {
+    std::vector<float> cost_matrix_row(*pNumCols);
     auto track_feature = rTracks[i]->mSmoothFeat;
-    for (int j = 0; j < rDetections.size(); ++j) {
+    for (int j = 0; j < *pNumCols; ++j) {
       auto det_feature = rDetections[j].mCurrFeat;
       float feat_square = 0.0;
       for (int k = 0; k < det_feature.size(); ++k) {
         feat_square += (track_feature[k] - det_feature[k]) *
             (track_feature[k] - det_feature[k]);
       }
-      cost_matrix_row.push_back(std::sqrt(feat_square));
+      cost_matrix_row[j] = std::sqrt(feat_square);
     }
     pCostMatrix->push_back(cost_matrix_row);
   }
-  *pNumRows = rTracks.size();
-  *pNumCols = rDetections.size();
 }
 
 void FuseMotion(
@@ -48,15 +49,13 @@ void FuseMotion(
   auto gating_dim = onlyPosition ? 2 : 4;
   float gating_threshold = rKalmanFilter.chi2inv95[gating_dim];
 
-  std::vector<DetectBox> measurements;
+  std::vector<DetectBox> measurements(rDetections.size(), DetectBox());
   for (int i = 0; i < rDetections.size(); ++i) {
-    DetectBox measurement;
     auto xyah = rDetections[i].ToXyah();
-    measurement[0] = xyah[0];
-    measurement[1] = xyah[1];
-    measurement[2] = xyah[2];
-    measurement[3] = xyah[3];
-    measurements.push_back(measurement);
+    measurements[i][0] = xyah[0];
+    measurements[i][1] = xyah[1];
+    measurements[i][2] = xyah[2];
+    measurements[i][3] = xyah[3];
   }
 
   for (int i = 0; i < rTracks.size(); ++i) {
@@ -78,26 +77,24 @@ std::vector<std::vector<float>> IouDistance(
     const std::vector<STrack> &rTracks2,
     int *pNumRows,
     int *pNumCols) {
-  std::vector<std::vector<float>> tlbrs_1;
-  std::vector<std::vector<float>> tlbrs_2;
-  for (int i = 0; i < rTracks1.size(); ++i) {
-    tlbrs_1.push_back(rTracks1[i]->mTlbr);
-  }
-  for (int i = 0; i < rTracks2.size(); ++i) {
-    tlbrs_2.push_back(rTracks2[i].mTlbr);
-  }
-
   *pNumRows = rTracks1.size();
   *pNumCols = rTracks2.size();
+  std::vector<std::vector<float>> tlbrs_1(*pNumRows);
+  std::vector<std::vector<float>> tlbrs_2(*pNumCols);
+  for (int i = 0; i < *pNumRows; ++i) {
+    tlbrs_1[i] = rTracks1[i]->mTlbr;
+  }
+  for (int i = 0; i < *pNumCols; ++i) {
+    tlbrs_2[i] = rTracks2[i].mTlbr;
+  }
 
-  std::vector<std::vector<float>> ious = Ious(tlbrs_1, tlbrs_2);
-  std::vector<std::vector<float>> cost_matrix;
+  auto ious = Ious(tlbrs_1, tlbrs_2);
+  std::vector<std::vector<float>> cost_matrix(ious.size());
   for (int i = 0; i < ious.size(); ++i) {
-    std::vector<float> iou;
+    cost_matrix[i].resize(ious[i].size());
     for (int j = 0; j < ious[i].size(); ++j) {
-      iou.push_back(1 - ious[i][j]);
+      cost_matrix[i][j] = 1 - ious[i][j];
     }
-    cost_matrix.push_back(iou);
   }
 
   return cost_matrix;
@@ -106,23 +103,22 @@ std::vector<std::vector<float>> IouDistance(
 std::vector<std::vector<float>> IouDistance(
     const std::vector<STrack> &rTracks1,
     const std::vector<STrack> &rTracks2) {
-  std::vector<std::vector<float>> tlbrs_1;
-  std::vector<std::vector<float>> tlbrs_2;
+  std::vector<std::vector<float>> tlbrs_1(rTracks1.size());
+  std::vector<std::vector<float>> tlbrs_2(rTracks2.size());
   for (int i = 0; i < rTracks1.size(); ++i) {
-    tlbrs_1.push_back(rTracks1[i].mTlbr);
+    tlbrs_1[i] = rTracks1[i].mTlbr;
   }
   for (int i = 0; i < rTracks2.size(); ++i) {
-    tlbrs_2.push_back(rTracks2[i].mTlbr);
+    tlbrs_2[i] = rTracks2[i].mTlbr;
   }
 
-  std::vector<std::vector<float>> ious = Ious(tlbrs_1, tlbrs_2);
-  std::vector<std::vector<float>> cost_matrix;
+  auto ious = Ious(tlbrs_1, tlbrs_2);
+  std::vector<std::vector<float>> cost_matrix(ious.size());
   for (int i = 0; i < ious.size(); ++i) {
-    std::vector<float> iou;
+    cost_matrix[i].resize(ious[i].size());
     for (int j = 0; j < ious[i].size(); ++j) {
-      iou.push_back(1 - ious[i][j]);
+      cost_matrix[i][j] = 1 - ious[i][j];
     }
-    cost_matrix.push_back(iou);
   }
 
   return cost_matrix;

@@ -23,7 +23,8 @@ STrack::STrack(
     mStartFrame {0},
     mTrackletLen {0},
     mMean {Eigen::Matrix<float, 1, 8, Eigen::RowMajor>::Zero()},
-    mCovariance {Eigen::Matrix<float, 8, 8, Eigen::RowMajor>::Zero()}
+    mCovariance {Eigen::Matrix<float, 8, 8, Eigen::RowMajor>::Zero()},
+    mpKalmanFilter {nullptr}
 {
   this->StaticTlwh();
   this->StaticTlbr();
@@ -109,9 +110,9 @@ int STrack::EndFrame() {
 }
 
 void STrack::Activate(
-    const jde_kalman::KalmanFilter &rKalmanFilter,
+    jde_kalman::KalmanFilter *pKalmanFilter,
     int frameId) {
-  mKalmanFilter = rKalmanFilter;
+  mpKalmanFilter = pKalmanFilter;
   mTrackId = this->NextId();
 
   std::vector<float> tlwh(4);
@@ -128,7 +129,7 @@ void STrack::Activate(
   xyah_box[2] = xyah[2];
   xyah_box[3] = xyah[3];
 
-  auto mc = mKalmanFilter.Initiate(xyah_box);
+  auto mc = mpKalmanFilter->Initiate(xyah_box);
   mMean = mc.first;
   mCovariance = mc.second;
 
@@ -151,7 +152,7 @@ void STrack::ReActivate(
   xyah_box[1] = xyah[1];
   xyah_box[2] = xyah[2];
   xyah_box[3] = xyah[3];
-  auto mc = mKalmanFilter.Update(mMean, mCovariance, xyah_box);
+  auto mc = mpKalmanFilter->Update(mMean, mCovariance, xyah_box);
   mMean = mc.first;
   mCovariance = mc.second;
 
@@ -182,7 +183,7 @@ void STrack::Update(
   xyah_box[2] = xyah[2];
   xyah_box[3] = xyah[3];
 
-  auto mc = mKalmanFilter.Update(mMean, mCovariance, xyah_box);
+  auto mc = mpKalmanFilter->Update(mMean, mCovariance, xyah_box);
   mMean = mc.first;
   mCovariance = mc.second;
 

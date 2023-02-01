@@ -1,13 +1,14 @@
 #ifndef INCLUDE_UTILS_H_
 #define INCLUDE_UTILS_H_
 
-#include "STrack.h"
 #include <cfloat>
+#include <string>
 #include <vector>
 
 #include <opencv2/opencv.hpp>
 #include <torch/torch.h>  // NOLINT
 
+#include "STrack.h"
 
 namespace jde_util {
 cv::Scalar GetColor(int idx);
@@ -47,7 +48,8 @@ void ScaleCoords(
 
 void Visualize(
     cv::Mat image,
-    const std::vector<STrack> &rStracks);
+    const std::vector<STrack> &rStracks,
+    int frameId);
 
 torch::Tensor XywhToTlbr(torch::Tensor x);
 }  // namespace jde_util

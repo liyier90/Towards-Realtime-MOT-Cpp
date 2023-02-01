@@ -9,9 +9,12 @@
 #include <utility>
 #include <vector>
 
+#include <opencv2/core/types.hpp>
+#include <opencv2/imgproc.hpp>
 #include <opencv2/opencv.hpp>
 
 #include "LapJv.h"
+#include "STrack.h"
 
 namespace jde_util {
 cv::Scalar GetColor(int idx) {
@@ -260,8 +263,8 @@ torch::Tensor NonMaxSuppression(
     torch::Tensor prediction,
     float nmsThreshold) {
   prediction.slice(1, 0, 4) = XywhToTlbr(prediction.slice(1, 0, 4));
-  torch::Tensor nms_indices = Nms(prediction.slice(1, 0, 4),
-      prediction.select(1, 4), nmsThreshold);
+  auto nms_indices = Nms(prediction.slice(1, 0, 4), prediction.select(1, 4),
+      nmsThreshold);
 
   return prediction.index_select(0, nms_indices);
 }
@@ -285,7 +288,12 @@ void ScaleCoords(
 
 void Visualize(
     cv::Mat image,
-    const std::vector<STrack> &rStracks) {
+    const std::vector<STrack> &rStracks,
+    int frameId) {
+  std::stringstream text_stream;
+  text_stream << "frame: " << frameId << " num: " << rStracks.size();
+  cv::putText(image, text_stream.str(), cv::Point(0, 20),
+      cv::FONT_HERSHEY_PLAIN, 1.0, cv::Scalar(0, 0, 255)); 
   for (int i = 0; i < rStracks.size(); ++i) {
     std::vector<float> tlwh = rStracks[i].mTlwh;
     bool vertical = tlwh[2] / tlwh[3] > 1.6;
@@ -296,7 +304,6 @@ void Visualize(
           cv::Point(tlwh[0], tlwh[1]), 0, 0.6, s, 2);
     }
   }
-  cv::imshow("test", image);
 }
 
 torch::Tensor XywhToTlbr(torch::Tensor x) {

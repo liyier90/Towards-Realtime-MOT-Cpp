@@ -38,7 +38,7 @@ class STrack {
   int EndFrame();
 
   void Activate(
-      const jde_kalman::KalmanFilter &rKalmanFilter,
+      jde_kalman::KalmanFilter *pKalmanFilter,
       int frameId);
 
   void ReActivate(
@@ -73,7 +73,7 @@ class STrack {
 
  private:
   void UpdateFeatures(std::vector<float> feat);
-  jde_kalman::KalmanFilter mKalmanFilter;
+  jde_kalman::KalmanFilter* mpKalmanFilter;
 };
 
 #endif  // INCLUDE_STRACK_H_

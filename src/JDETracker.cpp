@@ -20,8 +20,8 @@ JDETracker::JDETracker(
     mNetHeight {320},
     mScoreThreshold {0.5},
     mNmsThreshold {0.4},
-    mFrameId {0},
-    mMaxTimeLost {static_cast<int>(frameRate / 30.0 * trackBuffer)}
+    mMaxTimeLost {static_cast<int>(frameRate / 30.0 * trackBuffer)},
+    mFrameId {0}
 {
   torch::DeviceType device_type;
   if (torch::cuda::is_available()) {
@@ -32,12 +32,11 @@ JDETracker::JDETracker(
     device_type = torch::kCPU;
   }
 
-  torch::set_num_threads(1);
-  std::cout << "set threads num: " << torch::get_num_threads() << std::endl;
+  std::cout << "num threads: " << torch::get_num_threads() << std::endl;
 
   mpDevice = new torch::Device(device_type);
 
-  std::cout << "Load model ... ";
+  std::cout << "Load model ...";
   mModel = torch::jit::load(rModelPath);
   mModel.to(*mpDevice);
   std::cout << "Done!" << std::endl;
@@ -47,9 +46,10 @@ JDETracker::~JDETracker() {
   delete mpDevice;
 }
 
-std::vector<STrack> JDETracker::Update(cv::Mat image) {
-  auto padded_image = this->Preprocess(image);
-  auto img_tensor = torch::from_blob(padded_image.data,
+std::vector<STrack> JDETracker::Update(
+    const cv::Mat &rPaddedImage,
+    const cv::Mat &rImage) {
+  auto img_tensor = torch::from_blob(rPaddedImage.data,
       {mNetHeight, mNetWidth, 3}, torch::kFloat32);
   img_tensor = torch::unsqueeze(img_tensor, 0).permute({0, 3, 1, 2});
 
@@ -81,38 +81,27 @@ std::vector<STrack> JDETracker::Update(cv::Mat image) {
   std::vector<STrack*> strack_pool;
   std::vector<STrack*> r_tracked_stracks;
 
-  auto pred_raw = mModel.forward(inputs)
+  const auto pred_raw = mModel.forward(inputs)
       .toTensor()
       .to(torch::kCPU)
       .squeeze(0);
   // Filter by confidence score
-  auto pred = pred_raw.index_select(0,
+  const auto pred = pred_raw.index_select(0,
       torch::nonzero(pred_raw.select(1, 4) > mScoreThreshold).squeeze());
 
   if (pred.sizes()[0] > 0) {
-    auto dets = jde_util::NonMaxSuppression(pred, mNmsThreshold);
+    const auto dets = jde_util::NonMaxSuppression(pred, mNmsThreshold)
+        .contiguous();
     auto coords = dets.slice(1, 0, 4);
-    jde_util::ScaleCoords(cv::Size(mNetWidth, mNetHeight), image.size(),
+    jde_util::ScaleCoords(cv::Size(mNetWidth, mNetHeight), rImage.size(),
         &coords);
     // [x1, y1, x2, y2, object_conf, class_score, class_pred]
     for (int i = 0; i < dets.sizes()[0]; ++i) {
-      std::vector<float> tlbr = {
-        dets[i][0].item<float>(),
-        dets[i][1].item<float>(),
-        dets[i][2].item<float>(),
-        dets[i][3].item<float>()
-      };
-
-      cv::rectangle(image,
-          cv::Rect(cv::Point(tlbr[0], tlbr[1]), cv::Point(tlbr[2], tlbr[3])),
-          cv::Scalar(0, 255, 0), 2);
-
+      std::vector<float> tlbr(dets[i].data_ptr<float>(),
+          dets[i].data_ptr<float>() + 4);
       auto score = dets[i][4].item<float>();
-
-      std::vector<float> features;
-      for (int j = 6; j < dets.sizes()[1]; ++j) {
-        features.push_back(dets[i][j].item<float>());
-      }
+      std::vector<float> features(dets[i].data_ptr<float>() + 6,
+          dets[i].data_ptr<float>() + dets.sizes()[1]);
 
       STrack strack(STrack::pTlbrToTlwh(&tlbr), score, features);
       detections.push_back(strack);
@@ -230,7 +219,7 @@ std::vector<STrack> JDETracker::Update(cv::Mat image) {
     if (p_track->mScore < mScoreThreshold) {
       continue;
     }
-    p_track->Activate(mKalmanFilter, mFrameId);
+    p_track->Activate(&mKalmanFilter, mFrameId);
     activated_stracks.push_back(*p_track);
   }
 

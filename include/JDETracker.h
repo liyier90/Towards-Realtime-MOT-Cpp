@@ -2,6 +2,7 @@
 #define INCLUDE_JDETRACKER_H_
 
 #include <cfloat>
+#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -17,21 +18,22 @@ class JDETracker {
     , int trackBuffer = 30);
   ~JDETracker();
 
-  std::vector<STrack> Update(cv::Mat image);
+  cv::Mat Preprocess(cv::Mat image);
+  std::vector<STrack> Update(
+      const cv::Mat &rPaddedImage,
+      const cv::Mat &rImage);
 
-  int mNetWidth;
-  int mNetHeight;
+  const int mNetWidth;
+  const int mNetHeight;
 
  private:
-  cv::Mat Preprocess(cv::Mat image);
-
   torch::jit::script::Module mModel;
   torch::Device *mpDevice;
 
-  float mScoreThreshold;
-  float mNmsThreshold;
+  const float mScoreThreshold;
+  const float mNmsThreshold;
+  const int mMaxTimeLost;
   int mFrameId;
-  int mMaxTimeLost;
 
   std::vector<STrack> mTrackedStracks;
   std::vector<STrack> mLostStracks;

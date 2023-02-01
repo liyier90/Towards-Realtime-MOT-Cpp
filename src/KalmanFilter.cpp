@@ -153,7 +153,7 @@ Eigen::Matrix<float, 1, -1> KalmanFilter::GatingDistance(
   Eigen::Matrix<float, -1, -1> z = factor.triangularView<Eigen::Lower>()
       .solve<Eigen::OnTheRight>(d)
       .transpose();
-  auto zz = ((z.array()) * (z.array())).matrix();
+  auto zz = (z.array() * z.array()).matrix();
   auto square_maha = zz.colwise().sum();
   return square_maha;
 }

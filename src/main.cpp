@@ -1,5 +1,8 @@
 ﻿#include <chrono>
+#include <cstdlib>
+#include <iomanip>
 #include <iostream>
+#include <sstream>
 #include <string>
 
 #include <opencv2/opencv.hpp>
@@ -12,6 +15,7 @@ int main() {
   JDETracker tracker(model_path);
 
   std::string video_path = "../video/AVG-TownCentre.mp4";
+  std::string output_dir = "../results";
 
   cv::VideoCapture cap(video_path);
   if (!cap.isOpened()) {
@@ -31,11 +35,16 @@ int main() {
         tracker.mNetHeight);
     cv::resize(image, image, size);
 
+    auto padded_image = tracker.Preprocess(image);
     auto start_time = std::chrono::high_resolution_clock::now();
-    auto stracks = tracker.Update(image);
+    auto stracks = tracker.Update(padded_image, image);
     auto end_time = std::chrono::high_resolution_clock::now();
 
-    jde_util::Visualize(image, stracks);
+    std::stringstream output_path_stream;
+    output_path_stream << output_dir << "/" << std::setfill('0') << std::setw(5)
+        << num_frames << ".jpg";
+    jde_util::Visualize(image, stracks, num_frames);
+    cv::imwrite(output_path_stream.str(), image);
 
     std::chrono::duration<double> elapsed = end_time - start_time;
     total_elapsed += elapsed;
@@ -50,6 +59,9 @@ int main() {
     }
   }
   cap.release();
-
+  std::stringstream cmd_stream;
+  cmd_stream << "ffmpeg -f image2 -i " << output_dir << "/%05d.jpg -c:v copy "
+      << output_dir << "/results.mp4";
+  std::system(cmd_stream.str().c_str());
   return 0;
 }
